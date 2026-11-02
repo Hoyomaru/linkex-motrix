@@ -3,7 +3,7 @@ import type { QueueItem } from '../shared/queue';
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError } from './api';
 import { addDownload, tellStatus, tellStopped, type Aria2Status } from './motrix';
-import { readEngine, readHashes, readQueue, rememberHash, updateItem, writeEngine } from './store';
+import { logEvent, readEngine, readHashes, readQueue, rememberHash, updateItem, writeEngine } from './store';
 
 const MAX_ATTEMPTS = 3;
 const COPY_TIMEOUT_MS = 5 * 60_000;
@@ -31,12 +31,14 @@ export function kick(): void {
 
 export async function start(): Promise<void> {
   await writeEngine({ paused: false, message: '開始しました' });
+  await logEvent('info', '処理を開始しました');
   kick();
 }
 
 export async function pause(): Promise<void> {
   // 処理中の1件は区切りのよいところまで進めてから止まる
   await writeEngine({ paused: true, message: '一時停止中' });
+  await logEvent('info', '一時停止しました');
 }
 
 async function runLoop(): Promise<void> {
@@ -56,6 +58,7 @@ async function runLoop(): Promise<void> {
     if (!next) {
       if (downloading === 0) {
         await writeEngine({ paused: true, message: 'すべて終わりました' });
+        await logEvent('info', 'キューの処理がすべて終わりました');
         return;
       }
       await writeEngine({ message: `ダウンロード中 ${downloading}件` });
@@ -71,6 +74,7 @@ async function runLoop(): Promise<void> {
 
     if (!resumable && settings.pauseOnTrafficLimit && (await trafficExhausted())) {
       await writeEngine({ message: '転送量の上限に達したため待機中（設定で変更できます）' });
+      await logEvent('warn', '転送量の上限に達したため待機します（5分ごとに確認）');
       await sleep(TRAFFIC_RECHECK_MS);
       continue;
     }
@@ -111,12 +115,14 @@ async function processItem(item: QueueItem): Promise<void> {
   } catch (e) {
     if (e instanceof LinkexError && e.code === DISK_SPACE_FULL) {
       await updateItem(item.id, { state: 'pending', note: '容量の空き待ち' });
+      await logEvent('warn', `容量が足りないため待機: ${item.name}`);
       await sleep(CAPACITY_WAIT_MS);
       return;
     }
     if (/Motrixに接続できません|Motrixのエラー: .*unauthorized/i.test(errorText(e))) {
       // Motrix側の問題は件ごとの失敗に数えず、全体を止めて知らせる
       await writeEngine({ paused: true, message: `一時停止: ${errorText(e)}` });
+      await logEvent('error', `一時停止: ${errorText(e)}`);
       return;
     }
     await fail(item, errorText(e));
@@ -136,6 +142,8 @@ async function fail(item: QueueItem, message: string): Promise<void> {
     state: keepForDelete ? 'deleting' : attempts >= MAX_ATTEMPTS ? 'error' : 'retry',
     note: keepForDelete ? '失敗したコピーを削除します' : undefined,
   });
+  const final = !keepForDelete && attempts >= MAX_ATTEMPTS;
+  await logEvent(final ? 'error' : 'warn', `${final ? 'エラー' : '失敗（再試行します）'}: ${item.name} — ${message}`);
   if (!keepForDelete) await sleep(2_000);
 }
 
@@ -153,6 +161,7 @@ async function listRootIds(): Promise<Map<string, any>> {
 async function stepCopy(item: QueueItem): Promise<void> {
   if (!item.force && item.hash && (await readHashes())[item.hash]) {
     await updateItem(item.id, { state: 'skipped', note: '同じ中身をダウンロード済み' });
+    await logEvent('info', `重複のため省略: ${item.name}`);
     return;
   }
   const usage = await api.usage();
@@ -161,6 +170,7 @@ async function stepCopy(item: QueueItem): Promise<void> {
       state: 'error',
       error: `ファイルが容量の上限より大きいため保存できません（${formatBytes(item.size)}）`,
     });
+    await logEvent('error', `容量の上限より大きいため保存できません: ${item.name}`);
     return;
   }
 
@@ -236,8 +246,10 @@ async function stepSend(item: QueueItem): Promise<void> {
   }
   if (!url) throw new Error('ダウンロードURLを取得できませんでした');
 
-  const gid = await addDownload(url, { dir: item.relDir, out: item.outName });
+  // 再試行のときは、途中まで落としたファイルがあれば続きから取る
+  const gid = await addDownload(url, { dir: item.relDir, out: item.outName, resume: item.attempts > 0 });
   await updateItem(item.id, { state: 'deleting', hash, gid, note: undefined });
+  await logEvent('info', `Motrixへ渡しました: ${item.relDir}\\${item.outName}`);
 }
 
 /** Motrixに渡した直後に、自分のストレージのコピーを完全削除して容量を空ける */
@@ -293,6 +305,7 @@ export async function refreshDownloads(): Promise<void> {
         // 履歴に残っていない。Motrixに渡せた時点で成功とみなす（完了確認オフの要件）
         if (item.hash) await rememberHash(item.hash, item.name);
         await updateItem(item.id, { state: 'done', gid: undefined, note: 'Motrixの履歴になし' });
+        await logEvent('info', `完了（Motrixの履歴になし）: ${item.name}`);
         continue;
       }
     }
@@ -303,6 +316,7 @@ export async function refreshDownloads(): Promise<void> {
     if (status.status === 'complete') {
       if (item.hash) await rememberHash(item.hash, item.name);
       await updateItem(item.id, { ...progress, state: 'done', gid: undefined });
+      await logEvent('info', `完了: ${item.name}`);
     } else if (status.status === 'error') {
       const attempts = item.attempts + 1;
       await updateItem(item.id, {
@@ -312,8 +326,10 @@ export async function refreshDownloads(): Promise<void> {
         state: attempts >= MAX_ATTEMPTS ? 'error' : 'retry',
         error: `Motrixでのダウンロード失敗: ${status.errorMessage ?? status.errorCode ?? '不明'}`,
       });
+      await logEvent(attempts >= MAX_ATTEMPTS ? 'error' : 'warn', `Motrixでのダウンロード失敗: ${item.name} — ${status.errorMessage ?? status.errorCode ?? '不明'}`);
     } else if (status.status === 'removed') {
       await updateItem(item.id, { state: 'error', gid: undefined, error: 'Motrixでダウンロードが取り消されました' });
+      await logEvent('warn', `Motrixで取り消されました: ${item.name}`);
     } else {
       await updateItem(item.id, progress);
     }

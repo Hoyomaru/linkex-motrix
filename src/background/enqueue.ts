@@ -13,16 +13,23 @@ export interface EnqueueResult {
   elapsedMs: number;
 }
 
+export interface WalkedShare {
+  token: string;
+  shareName: string;
+  files: WalkedFile[];
+}
+
 /** 同時に読む共有リンクの数 */
 const SHARE_CONCURRENCY = 3;
 
+/** 貼り付けたURL（複数可）の共有を読み、全ファイルをキューに追加する */
 export async function enqueueShares(text: string): Promise<EnqueueResult> {
   const startedAt = Date.now();
   const { tokens, invalid } = parseShareTokens(text);
   const result: EnqueueResult = { added: 0, alreadyQueued: 0, invalid, failed: [], elapsedMs: 0 };
 
   // 貼った順番どおりにキューへ並ぶよう、読み終わった順ではなく元の順で追加する
-  const walked: ({ shareName: string; files: WalkedFile[] } | null)[] = new Array(tokens.length).fill(null);
+  const walked: (WalkedShare | null)[] = new Array(tokens.length).fill(null);
   let nextIndex = 0;
   const worker = async () => {
     while (nextIndex < tokens.length) {
@@ -30,7 +37,7 @@ export async function enqueueShares(text: string): Promise<EnqueueResult> {
       const token = tokens[index];
       const res = await walkShareInTab(token).catch((e) => ({ ok: false as const, error: String(e?.message ?? e) }));
       if (res.ok) {
-        walked[index] = { shareName: res.shareName, files: res.files };
+        walked[index] = { token, shareName: res.shareName, files: res.files };
       } else {
         result.failed.push({ token, error: res.error });
       }
@@ -38,25 +45,33 @@ export async function enqueueShares(text: string): Promise<EnqueueResult> {
   };
   await Promise.all(Array.from({ length: Math.min(SHARE_CONCURRENCY, tokens.length) }, worker));
 
+  const counts = await addWalkedToQueue(walked.filter((w): w is WalkedShare => w !== null));
+  result.added = counts.added;
+  result.alreadyQueued = counts.alreadyQueued;
+  result.elapsedMs = Date.now() - startedAt;
+  return result;
+}
+
+/** 読み終わった共有のファイル（全部または選んだ分）をキューに追加する */
+export async function addWalkedToQueue(shares: WalkedShare[]): Promise<{ added: number; alreadyQueued: number }> {
+  const counts = { added: 0, alreadyQueued: 0 };
   await mutateQueue((items) => {
     const now = Date.now();
-    tokens.forEach((token, index) => {
-      const share = walked[index];
-      if (!share) return;
+    for (const share of shares) {
       for (const f of share.files) {
-        if (items.some((i) => i.shareToken === token && i.sourceFileId === f.id)) {
-          result.alreadyQueued++;
+        if (items.some((i) => i.shareToken === share.token && i.sourceFileId === f.id)) {
+          counts.alreadyQueued++;
           continue;
         }
-        const relDir = [sanitizeName(share.shareName, token), ...f.folders.map((d) => sanitizeName(d))].join('\\');
+        const relDir = [sanitizeName(share.shareName, share.token), ...f.folders.map((d) => sanitizeName(d))].join('\\');
         const base = sanitizeName(f.name);
         let outName = base;
         for (let n = 2; items.some((i) => i.relDir === relDir && i.outName === outName); n++) {
           outName = withNumber(base, n);
         }
         const item: QueueItem = {
-          id: `${token}:${f.id}`,
-          shareToken: token,
+          id: `${share.token}:${f.id}`,
+          shareToken: share.token,
           shareName: share.shareName,
           sourceFileId: f.id,
           name: f.name,
@@ -70,11 +85,9 @@ export async function enqueueShares(text: string): Promise<EnqueueResult> {
           updatedAt: now,
         };
         items.push(item);
-        result.added++;
+        counts.added++;
       }
-    });
+    }
   });
-
-  result.elapsedMs = Date.now() - startedAt;
-  return result;
+  return counts;
 }

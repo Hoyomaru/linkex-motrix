@@ -42,12 +42,17 @@ export async function getVersion(): Promise<{ version: string }> {
  * ダウンロードを追加して GID を返す。
  * dir は基準フォルダからの相対パスを受け取り、設定の基準フォルダとつなげる。
  */
-export async function addDownload(url: string, opts: { dir?: string; out?: string } = {}): Promise<string> {
+export async function addDownload(
+  url: string,
+  opts: { dir?: string; out?: string; resume?: boolean } = {},
+): Promise<string> {
   const { downloadDir } = await loadSettings();
   const options: Record<string, string> = {};
   const dir = joinDir(downloadDir, opts.dir ?? '');
   if (dir) options.dir = dir;
   if (opts.out) options.out = opts.out;
+  // 再試行のときは、途中まで落としたファイル（.aria2 の管理ファイル付き）から続きを取る
+  if (opts.resume) options.continue = 'true';
   return aria2<string>('addUri', [[url], options]);
 }
 

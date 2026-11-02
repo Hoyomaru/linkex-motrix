@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Linkexの共有ファイルを自分のストレージ経由でMotrixに渡すEdge拡張機能",
   "scripts": {
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && vite build -c vite.content.config.ts",
     "watch": "vite build --watch",
     "typecheck": "tsc --noEmit"
   },

@@ -36,6 +36,23 @@ main {
 .state-done { color: var(--accent); }
 .state-error { color: var(--danger); }
 
+.events {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  max-height: 260px;
+  overflow: auto;
+  font-size: 13px;
+}
+.events li { padding: 3px 0; border-bottom: 1px solid var(--border); }
+.events time { color: var(--muted); font-family: var(--mono); font-size: 12px; margin-right: 8px; }
+.events .warn { color: #c48a1b; }
+.events .error { color: var(--danger); }
+
+.debug { margin-top: 8px; }
+.debug > summary { cursor: pointer; color: var(--muted); padding: 8px 0; }
+.debug-body { display: flex; flex-direction: column; gap: 16px; }
+
 .log {
   max-height: 320px;
   overflow: auto;

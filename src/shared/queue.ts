@@ -64,6 +64,15 @@ export interface EngineState {
   updatedAt: number;
 }
 
+export interface EventEntry {
+  at: number;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+}
+
+export const EVENTS_KEY = 'events';
+export const MAX_EVENTS = 300;
+
 export const QUEUE_KEY = 'queue';
 export const ENGINE_KEY = 'engine';
 export const HASHES_KEY = 'downloadedHashes';

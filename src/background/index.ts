@@ -2,10 +2,10 @@ import type { Request, Response } from '../shared/messages';
 import { ACTIVE_STATES, FINISHED_STATES } from '../shared/queue';
 import { loadSettings, saveSettings } from '../shared/settings';
 import { kick, pause, refreshDownloads, start } from './engine';
-import { enqueueShares } from './enqueue';
-import { callLinkex, ensureLinkexTab } from './linkex-tab';
+import { addWalkedToQueue, enqueueShares } from './enqueue';
+import { callLinkex, ensureLinkexTab, walkShareInTab } from './linkex-tab';
 import { addDownload, getVersion, tellStatus } from './motrix';
-import { mutateQueue, readEngine } from './store';
+import { clearEvents, mutateQueue, readEngine } from './store';
 
 chrome.runtime.onMessage.addListener((message: Request, _sender, sendResponse) => {
   handle(message)
@@ -65,6 +65,24 @@ async function handle(req: Request): Promise<unknown> {
 
     case 'queue.add':
       return enqueueShares(req.text);
+    case 'share.walk': {
+      const res = await walkShareInTab(req.token);
+      if (!res.ok) throw new Error(res.error);
+      return { shareName: res.shareName, files: res.files };
+    }
+    case 'queue.addFiles':
+      return addWalkedToQueue([{ token: req.token, shareName: req.shareName, files: req.files }]);
+    case 'dashboard.open': {
+      const url = chrome.runtime.getURL('dashboard.html');
+      const [existing] = await chrome.tabs.query({ url });
+      if (existing?.id !== undefined) {
+        await chrome.tabs.update(existing.id, { active: true });
+        if (existing.windowId !== undefined) await chrome.windows.update(existing.windowId, { focused: true });
+      } else {
+        await chrome.tabs.create({ url });
+      }
+      return true;
+    }
     case 'queue.start':
       return start();
     case 'queue.pause':
@@ -90,6 +108,8 @@ async function handle(req: Request): Promise<unknown> {
         items.splice(0, items.length, ...keep);
       });
 
+    case 'events.clear':
+      return clearEvents();
     case 'settings.get':
       return loadSettings();
     case 'settings.set':

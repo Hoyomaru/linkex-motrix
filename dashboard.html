@@ -10,7 +10,7 @@
   <body>
     <header>
       <h1>Linkex Motrix</h1>
-      <span class="muted">段階1</span>
+      <span class="muted">共有ファイルを Motrix へ</span>
     </header>
 
     <main>
@@ -56,6 +56,14 @@
       </section>
 
       <section class="panel">
+        <div class="row" style="justify-content: space-between">
+          <h2 style="margin: 0">処理ログ</h2>
+          <button id="events-clear">消去</button>
+        </div>
+        <ol id="events" class="events"></ol>
+      </section>
+
+      <section class="panel">
         <h2>設定</h2>
         <form id="settings" class="settings">
           <label>Motrixの接続先<input type="text" name="rpcUrl" /></label>
@@ -68,7 +76,9 @@
         </form>
       </section>
 
-      <h2 style="margin: 12px 0 0">確認用の操作（段階0）</h2>
+      <details class="debug">
+      <summary>確認用の操作（Linkex・Motrixの動作を1つずつ試す）</summary>
+      <div class="debug-body">
 
       <section class="panel">
         <h2>1. 共有リンクの中身</h2>
@@ -118,6 +128,8 @@
         </div>
         <pre id="log" class="mono log"></pre>
       </section>
+      </div>
+      </details>
     </main>
 
     <script type="module" src="/src/dashboard/dashboard.ts"></script>

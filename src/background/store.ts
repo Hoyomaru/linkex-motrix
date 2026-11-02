@@ -1,10 +1,31 @@
 import {
   ENGINE_KEY,
+  EVENTS_KEY,
   HASHES_KEY,
+  MAX_EVENTS,
   QUEUE_KEY,
   type EngineState,
+  type EventEntry,
   type QueueItem,
 } from '../shared/queue';
+
+// 処理ログ。新しいものを先頭に、最大 MAX_EVENTS 件まで残す
+let eventLock: Promise<unknown> = Promise.resolve();
+export function logEvent(level: EventEntry['level'], message: string): Promise<void> {
+  const run = async () => {
+    const stored = await chrome.storage.local.get(EVENTS_KEY);
+    const events = (stored[EVENTS_KEY] as EventEntry[] | undefined) ?? [];
+    events.unshift({ at: Date.now(), level, message });
+    await chrome.storage.local.set({ [EVENTS_KEY]: events.slice(0, MAX_EVENTS) });
+  };
+  const next = eventLock.then(run, run);
+  eventLock = next.catch(() => undefined);
+  return next;
+}
+
+export async function clearEvents(): Promise<void> {
+  await chrome.storage.local.set({ [EVENTS_KEY]: [] });
+}
 
 // キューの読み書きを1本にまとめ、同時に書き換えて内容が消えるのを防ぐ
 let lock: Promise<unknown> = Promise.resolve();

@@ -11,6 +11,18 @@
     "default_title": "Linkex Motrix",
     "default_popup": "popup.html"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.linkex.io/f/*",
+        "https://linkex.io/f/*",
+        "https://l2e.click/d/*",
+        "https://www.l2e.click/d/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "permissions": ["storage", "tabs", "scripting", "alarms"],
   "host_permissions": [
     "https://www.linkex.io/*",

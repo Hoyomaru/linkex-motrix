@@ -2,9 +2,11 @@ import { formatBytes } from '../shared/files';
 import { send } from '../shared/messages';
 import {
   ENGINE_KEY,
+  EVENTS_KEY,
   QUEUE_KEY,
   STATE_LABELS,
   type EngineState,
+  type EventEntry,
   type ItemState,
   type QueueItem,
 } from '../shared/queue';
@@ -56,15 +58,44 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     if (!res.ok) throw new Error(res.error);
   });
 
+  run($('events-clear'), async () => {
+    const res = await send({ type: 'events.clear' });
+    if (!res.ok) throw new Error(res.error);
+  });
+
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if (changes[QUEUE_KEY]) renderQueue((changes[QUEUE_KEY].newValue as QueueItem[] | undefined) ?? []);
     if (changes[ENGINE_KEY]) renderEngine(changes[ENGINE_KEY].newValue as EngineState | undefined);
+    if (changes[EVENTS_KEY]) renderEvents((changes[EVENTS_KEY].newValue as EventEntry[] | undefined) ?? []);
   });
-  chrome.storage.local.get([QUEUE_KEY, ENGINE_KEY]).then((stored) => {
+  chrome.storage.local.get([QUEUE_KEY, ENGINE_KEY, EVENTS_KEY]).then((stored) => {
     renderQueue((stored[QUEUE_KEY] as QueueItem[] | undefined) ?? []);
     renderEngine(stored[ENGINE_KEY] as EngineState | undefined);
+    renderEvents((stored[EVENTS_KEY] as EventEntry[] | undefined) ?? []);
   });
+
+  function renderEvents(events: EventEntry[]) {
+    const list = $('events');
+    if (events.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'muted';
+      li.textContent = 'まだ記録はありません';
+      list.replaceChildren(li);
+      return;
+    }
+    list.replaceChildren(
+      ...events.map((ev) => {
+        const li = document.createElement('li');
+        li.className = ev.level;
+        const time = document.createElement('time');
+        const d = new Date(ev.at);
+        time.textContent = `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+        li.append(time, document.createTextNode(ev.message));
+        return li;
+      }),
+    );
+  }
 
   function renderEngine(engine: EngineState | undefined) {
     const el = $('engine-message');
