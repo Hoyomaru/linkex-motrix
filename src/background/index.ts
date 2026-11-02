@@ -1,0 +1,105 @@
+import type { Request, Response } from '../shared/messages';
+import { ACTIVE_STATES, FINISHED_STATES } from '../shared/queue';
+import { loadSettings, saveSettings } from '../shared/settings';
+import { kick, pause, refreshDownloads, start } from './engine';
+import { enqueueShares } from './enqueue';
+import { callLinkex, ensureLinkexTab } from './linkex-tab';
+import { addDownload, getVersion, tellStatus } from './motrix';
+import { mutateQueue, readEngine } from './store';
+
+chrome.runtime.onMessage.addListener((message: Request, _sender, sendResponse) => {
+  handle(message)
+    .then((data) => sendResponse({ ok: true, data } satisfies Response))
+    .catch((e: unknown) => sendResponse({ ok: false, error: String((e as Error)?.message ?? e) } satisfies Response));
+  return true; // 非同期で応答する
+});
+
+// Service Worker が止められても、1分ごとに起きて続きを再開する
+chrome.alarms.create('tick', { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== 'tick') return;
+  const engine = await readEngine();
+  if (!engine.paused) kick();
+  else await refreshDownloads().catch(() => undefined);
+});
+chrome.runtime.onStartup.addListener(resumeIfRunning);
+chrome.runtime.onInstalled.addListener(async () => {
+  // 0.1.0 で「Motrixに見つからない」とエラーにしていた件は、実際には完了していたので直す
+  await mutateQueue((items) => {
+    for (const item of items) {
+      if (item.state === 'error' && item.error?.startsWith('Motrixにこのダウンロードが見つかりません')) {
+        Object.assign(item, { state: 'done', error: undefined, gid: undefined, note: 'Motrixの履歴になし', updatedAt: Date.now() });
+      }
+    }
+  });
+  await resumeIfRunning();
+});
+
+async function resumeIfRunning() {
+  const engine = await readEngine();
+  if (!engine.paused) kick();
+}
+
+async function handle(req: Request): Promise<unknown> {
+  switch (req.type) {
+    case 'linkex.call': {
+      const result = await callLinkex({ method: req.method, path: req.path, params: req.params, data: req.data });
+      if (!result.ok) {
+        throw new Error(`${result.error}${result.detail ? ` ${JSON.stringify(result.detail)}` : ''}`);
+      }
+      return result.data;
+    }
+    case 'linkex.openTab': {
+      const tabId = await ensureLinkexTab();
+      await chrome.tabs.update(tabId, { active: true });
+      return tabId;
+    }
+    case 'motrix.version':
+      return getVersion();
+    case 'motrix.add':
+      return addDownload(req.url, { dir: req.dir, out: req.out });
+    case 'motrix.status':
+      return tellStatus(req.gid);
+    case 'cdn.probe':
+      return probeCdn(req.url);
+
+    case 'queue.add':
+      return enqueueShares(req.text);
+    case 'queue.start':
+      return start();
+    case 'queue.pause':
+      return pause();
+    case 'queue.retry':
+      return mutateQueue((items) => {
+        const item = items.find((i) => i.id === req.id);
+        if (item && (item.state === 'error' || item.state === 'skipped')) {
+          // 「重複のため省略」を落とし直す場合は、重複判定を外す
+          const force = item.state === 'skipped' || item.force;
+          Object.assign(item, { state: 'retry', attempts: 0, error: undefined, note: undefined, force, updatedAt: Date.now() });
+        }
+      });
+    case 'queue.remove':
+      return mutateQueue((items) => {
+        const index = items.findIndex((i) => i.id === req.id);
+        // 保存中・削除中の件は、ストレージにコピーが残らないよう消させない
+        if (index >= 0 && !ACTIVE_STATES.includes(items[index].state)) items.splice(index, 1);
+      });
+    case 'queue.clearFinished':
+      return mutateQueue((items) => {
+        const keep = items.filter((i) => !FINISHED_STATES.includes(i.state));
+        items.splice(0, items.length, ...keep);
+      });
+
+    case 'settings.get':
+      return loadSettings();
+    case 'settings.set':
+      return saveSettings(req.patch);
+  }
+}
+
+/** ダウンロードURLがまだ使えるかを、先頭1バイトだけ取得して確かめる */
+async function probeCdn(url: string): Promise<{ status: number; contentRange: string | null }> {
+  const res = await fetch(url, { headers: { Range: 'bytes=0-0' }, cache: 'no-store' });
+  await res.body?.cancel().catch(() => undefined);
+  return { status: res.status, contentRange: res.headers.get('content-range') };
+}

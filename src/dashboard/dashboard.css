@@ -1,0 +1,47 @@
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 20px 24px 8px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 8px 24px 40px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.stat { display: flex; justify-content: space-between; margin-top: 8px; }
+
+.settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.settings label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.settings label.check { flex-direction: row; align-items: center; color: var(--text); grid-column: 1 / -1; }
+.settings .row { grid-column: 1 / -1; }
+
+.queue { margin-top: 10px; }
+.queue .sub { font-size: 12px; color: var(--muted); }
+.queue .err { font-size: 12px; color: var(--danger); }
+.queue td.state { white-space: nowrap; }
+.state-done { color: var(--accent); }
+.state-error { color: var(--danger); }
+
+.log {
+  max-height: 320px;
+  overflow: auto;
+  margin: 12px 0 0;
+  white-space: pre-wrap;
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 8px;
+}

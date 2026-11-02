@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Linkex Motrix",
+  "version": "0.1.0",
+  "description": "Linkexの共有ファイルを自分のストレージ経由でMotrixに渡すダウンローダー",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Linkex Motrix",
+    "default_popup": "popup.html"
+  },
+  "permissions": ["storage", "tabs", "scripting", "alarms"],
+  "host_permissions": [
+    "https://www.linkex.io/*",
+    "https://linkex.io/*",
+    "https://l2e.click/*",
+    "https://www.l2e.click/*",
+    "https://*.fastspeedcdn.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ]
+}

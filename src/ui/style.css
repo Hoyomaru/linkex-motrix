@@ -1,0 +1,87 @@
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --text: #1d2228;
+  --muted: #65707c;
+  --border: #dde1e6;
+  --accent: #1f9d6b;
+  --accent-text: #ffffff;
+  --danger: #c93c3c;
+  --warn-bg: #fff6e0;
+  --mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15181c;
+    --panel: #1e2227;
+    --text: #e6e9ed;
+    --muted: #98a2ad;
+    --border: #2f353c;
+    --accent: #2fb57f;
+    --accent-text: #0d1512;
+    --danger: #e26161;
+    --warn-bg: #3a3220;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 'Segoe UI', 'Yu Gothic UI', 'Meiryo', sans-serif;
+}
+
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 15px; margin: 0 0 12px; }
+
+button {
+  font: inherit;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button.danger { color: var(--danger); border-color: var(--danger); }
+
+input[type='text'], input[type='password'], input[type='number'], textarea {
+  font: inherit;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ok { color: var(--accent); }
+.ng { color: var(--danger); }
+.note { background: var(--warn-bg); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+
+.meter { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+.meter > div { height: 100%; background: var(--accent); }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12px; }
+td.actions { white-space: nowrap; text-align: right; }
+td.actions button { margin-left: 4px; }

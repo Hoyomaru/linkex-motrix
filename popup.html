@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>Linkex Motrix</title>
+    <link rel="stylesheet" href="/src/ui/style.css" />
+    <style>
+      body { width: 300px; padding: 14px; }
+      .stat { display: flex; justify-content: space-between; margin-top: 10px; font-size: 13px; }
+      .actions { margin-top: 14px; display: flex; gap: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1 style="font-size: 16px">Linkex Motrix</h1>
+    <div class="stat"><span>容量</span><span id="usage">-</span></div>
+    <div class="meter"><div id="usage-bar" style="width: 0"></div></div>
+    <div class="stat"><span>転送量（目安）</span><span id="traffic">-</span></div>
+    <div class="stat"><span>キュー</span><span id="counts">-</span></div>
+    <div id="engine" class="muted" style="margin-top: 8px; font-size: 12px"></div>
+    <div id="error" class="ng" style="margin-top: 10px; font-size: 12px"></div>
+    <div class="actions">
+      <button id="toggle">開始</button>
+      <button id="open" class="primary">専用ページを開く</button>
+    </div>
+    <script type="module" src="/src/popup/popup.ts"></script>
+  </body>
+</html>

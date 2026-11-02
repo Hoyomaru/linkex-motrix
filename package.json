@@ -1,0 +1,17 @@
+{
+  "name": "linkex-motrix",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Linkexの共有ファイルを自分のストレージ経由でMotrixに渡すEdge拡張機能",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "watch": "vite build --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.7",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}
