@@ -18,6 +18,8 @@ export async function aria2<T = unknown>(method: string, params: unknown[] = [])
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      // Motrixが固まっていても処理全体が止まらないよう、15秒で諦める
+      signal: AbortSignal.timeout(15_000),
     });
   } catch {
     throw new Error('Motrixに接続できません。Motrixが起動しているか、接続先の設定を確認してください');

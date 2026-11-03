@@ -3,12 +3,21 @@
  * ページのデザインに影響しないよう、Shadow DOM の中に描く。
  * このファイルは単体のスクリプトとしてビルドする（vite.content.config.ts）。
  */
-import { formatBytes } from '../shared/files';
-import type { Response } from '../shared/messages';
-import { GROUP_OF, QUEUE_KEY, STATE_LABELS, summarizeQueue, type QueueItem } from '../shared/queue';
+import { formatBytes, formatEta, formatSpeed, percent } from '../shared/format';
+import type { MotrixLive, Response } from '../shared/messages';
+import {
+  ENGINE_KEY,
+  GROUP_OF,
+  QUEUE_KEY,
+  STATE_LABELS,
+  summarizeQueue,
+  type EngineState,
+  type QueueItem,
+} from '../shared/queue';
 import { parseShareToken } from '../shared/share-url';
 
 interface WalkProgress {
+  phase?: 'tab';
   files: number;
   bytes: number;
   folders: number;
@@ -29,59 +38,114 @@ function send<T>(message: unknown): Promise<Response<T>> {
     .catch((e) => ({ ok: false as const, error: String(e?.message ?? e) }));
 }
 
+const LOGO = `<svg viewBox="0 0 128 128" aria-hidden="true"><defs><linearGradient id="lm-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2ab880"/><stop offset="1" stop-color="#168258"/></linearGradient></defs><rect width="128" height="128" rx="28" fill="url(#lm-g)"/><g fill="#fff"><rect x="54" y="20" width="20" height="46"/><polygon points="30,58 98,58 64,94"/><rect x="28" y="100" width="72" height="12" rx="6"/></g></svg>`;
+
 const STYLE = `
 :host { all: initial; }
 [hidden] { display: none !important; }
+* { box-sizing: border-box; }
 .panel {
-  --bg: #ffffff; --soft: #f3f5f7; --text: #1d2228; --muted: #65707c; --border: #dde1e6;
-  --accent: #1f9d6b; --accent-text: #ffffff; --danger: #c93c3c; --info: #2b6cb0;
+  --bg: #ffffff; --soft: #f1f4f6; --text: #1d2228; --muted: #65707c; --border: #e2e6ea;
+  --accent: #1f9d6b; --accent-soft: #e3f4ec; --accent-text: #ffffff; --danger: #c93c3c;
+  --info: #2b6cb0; --info-soft: #e6effa; --warn: #b7791f; --warn-bg: #fff6e0;
   position: fixed; right: 16px; bottom: 16px; z-index: 2147483647;
   width: 340px; max-width: calc(100vw - 32px);
   font: 13px/1.5 'Segoe UI', 'Yu Gothic UI', 'Meiryo', sans-serif;
-  color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
-  box-shadow: 0 8px 28px rgba(0,0,0,.18); padding: 12px;
+  color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(16,24,32,.16), 0 2px 6px rgba(16,24,32,.06); overflow: hidden;
+  display: flex; flex-direction: column; max-height: calc(100vh - 32px);
 }
 @media (prefers-color-scheme: dark) {
   .panel {
-    --bg: #1e2227; --soft: #262b31; --text: #e6e9ed; --muted: #98a2ad; --border: #2f353c;
-    --accent: #2fb57f; --accent-text: #0d1512; --danger: #e26161; --info: #63a4e8;
-    box-shadow: 0 8px 28px rgba(0,0,0,.45);
+    --bg: #1e2227; --soft: #282d33; --text: #e6e9ed; --muted: #98a2ad; --border: #333a41;
+    --accent: #2fb57f; --accent-soft: #1b3a2d; --accent-text: #0d1512; --danger: #e26161;
+    --info: #63a4e8; --info-soft: #1d2b3b; --warn: #e0a640; --warn-bg: #3a3220;
+    box-shadow: 0 12px 32px rgba(0,0,0,.5);
   }
 }
-.panel.collapsed { width: auto; padding: 6px 8px; }
-.head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.title { font-weight: 600; }
-.mini { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 10px 12px; border-bottom: 1px solid var(--border); }
+.logo { width: 20px; height: 20px; flex: none; display: block; }
+.logo svg { width: 100%; height: 100%; display: block; }
+.title { font-weight: 700; flex: 1; white-space: nowrap; }
+.pill { display: inline-flex; align-items: center; gap: 5px; padding: 1px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--soft); color: var(--muted); white-space: nowrap; }
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.running { background: var(--accent-soft); color: var(--accent); }
+.pill.waiting { background: var(--warn-bg); color: var(--warn); }
+.body { padding: 12px; display: flex; flex-direction: column; gap: 10px; overflow: auto; min-height: 0; }
+.body > * { flex-shrink: 0; }
+
+/* 小さくしたとき */
+.panel.collapsed { width: auto; border-radius: 999px; }
+.panel.collapsed .head { border-bottom: 0; padding: 5px 5px 5px 8px; }
+.panel.collapsed .title, .panel.collapsed .pill { display: none; }
+.mini { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mini .ring { width: 16px; height: 16px; border-radius: 50%; background: conic-gradient(var(--accent) var(--p, 0%), var(--border) 0); -webkit-mask: radial-gradient(circle, transparent 4.5px, #000 5px); mask: radial-gradient(circle, transparent 4.5px, #000 5px); }
+
 button {
-  font: inherit; padding: 5px 10px; border-radius: 6px; cursor: pointer;
+  font: inherit; padding: 6px 10px; border-radius: 8px; cursor: pointer;
   border: 1px solid var(--border); background: var(--soft); color: var(--text);
 }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: .5; cursor: default; }
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-button.icon { padding: 1px 8px; background: transparent; }
-button.link { border: 0; background: transparent; color: var(--muted); padding: 2px 0; text-decoration: underline; }
-.row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
-.check { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--muted); cursor: pointer; }
-.status { margin-top: 8px; color: var(--muted); white-space: pre-wrap; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+button.icon { padding: 0; width: 26px; height: 26px; line-height: 1; background: transparent; border-color: transparent; color: var(--muted); font-size: 15px; border-radius: 6px; }
+button.icon:hover:not(:disabled) { background: var(--soft); border-color: var(--border); color: var(--text); }
+button.link { border: 0; background: transparent; color: var(--muted); padding: 2px 0; }
+button.link:hover:not(:disabled) { color: var(--text); text-decoration: underline; }
+button[data-icon]::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -0.5px; background: currentColor; }
+button[data-icon="play"]::before { clip-path: polygon(10% 0, 100% 50%, 10% 100%); }
+button[data-icon="pause"]::before { background: linear-gradient(90deg, currentColor 35%, transparent 35% 65%, currentColor 65%); }
+
+.share { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--info-soft); }
+.share .label { font-size: 11px; color: var(--muted); font-weight: 600; }
+.share .value { font-weight: 700; font-variant-numeric: tabular-nums; }
+.actions { display: grid; grid-template-columns: 1.4fr 1fr; gap: 6px; }
+.check { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; font-size: 12px; }
+.status { color: var(--muted); white-space: pre-wrap; font-size: 12px; }
 .status:empty { display: none; }
 .status.ok { color: var(--accent); }
 .status.ng { color: var(--danger); }
-.progress { margin-top: 10px; padding: 8px 10px; background: var(--soft); border-radius: 8px; }
-.progress .line { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
-.progress .err { color: var(--danger); }
-.meter { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+
+/* このリンクの進み具合 */
+.progress { padding: 10px; background: var(--soft); border-radius: 10px; }
+.p-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
+.p-pct { font-size: 26px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -0.5px; }
+.p-pct small { font-size: 13px; color: var(--muted); font-weight: 600; margin-left: 1px; }
+.p-side { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+.p-side .p-count { font-weight: 600; }
+.p-side .p-bytes { color: var(--muted); }
+.meter { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 8px; }
 .meter > div { height: 100%; background: var(--accent); transition: width .4s; }
-.pick-head { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; gap: 8px; }
-.list { margin-top: 6px; max-height: 300px; overflow: auto; border-top: 1px solid var(--border); }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 8px; }
+.tile { background: var(--bg); border-radius: 7px; padding: 4px 7px; display: flex; flex-direction: column; min-width: 0; }
+.tile .label { color: var(--muted); font-size: 10px; }
+.tile .value { font-weight: 600; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.counts { display: flex; gap: 2px 10px; flex-wrap: wrap; margin-top: 8px; font-size: 11px; color: var(--muted); }
+.counts span { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.counts span::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.counts b { color: var(--text); font-weight: 600; }
+.counts .c-active { color: var(--info); }
+.counts .c-done { color: var(--accent); }
+.counts .c-error { color: var(--danger); }
+
+.foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.foot button[data-act="toggle"] { padding: 4px 12px; font-size: 12px; }
+
+/* 選んで追加 */
+.pick-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.pick-count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.list { max-height: min(300px, 45vh); overflow: auto; border: 1px solid var(--border); border-radius: 10px; padding: 0 8px; }
 .item { display: flex; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); align-items: flex-start; cursor: pointer; }
+.item:last-child { border-bottom: 0; }
 .item.queued { cursor: default; opacity: .65; }
-.item .name { flex: 1; min-width: 0; word-break: break-all; }
+.item .name { flex: 1; min-width: 0; word-break: break-all; font-size: 12px; }
 .item .sub { color: var(--muted); font-size: 11px; }
 .item .tag { color: var(--info); font-size: 11px; }
 .item .tag:empty { display: none; }
 .item .tag.ng { color: var(--danger); }
-.item .size { color: var(--muted); white-space: nowrap; font-size: 12px; }
+.item .size { color: var(--muted); white-space: nowrap; font-size: 11px; font-variant-numeric: tabular-nums; }
+.pick-actions { display: flex; gap: 6px; }
+.pick-actions .primary { flex: 1; }
 `;
 
 function mount(token: string): { host: HTMLElement; dispose: () => void } {
@@ -92,32 +156,49 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
     <style>${STYLE}</style>
     <div class="panel">
       <div class="head">
+        <span class="logo">${LOGO}</span>
         <span class="title">Linkex Motrix</span>
-        <span class="mini" hidden></span>
+        <span class="mini" hidden><span class="ring"></span><span class="mini-text"></span></span>
+        <span class="pill engine-pill">停止中</span>
         <button class="icon" data-act="collapse" title="小さくする">－</button>
       </div>
       <div class="body">
-        <div class="row">
+        <div class="share" hidden>
+          <span class="label">この共有</span>
+          <span class="value share-size"></span>
+        </div>
+        <div class="actions">
           <button class="primary" data-act="all">全部キューに追加</button>
           <button data-act="pick">選んで追加</button>
         </div>
         <label class="check"><input type="checkbox" data-act="autostart" checked /> 追加したら開始する</label>
         <div class="pick-head" hidden>
-          <label class="check" style="margin: 0"><input type="checkbox" data-act="select-all" checked /> すべて選択</label>
-          <span class="mini pick-count"></span>
+          <label class="check"><input type="checkbox" data-act="select-all" checked /> すべて選択</label>
+          <span class="pick-count"></span>
         </div>
         <div class="list" hidden></div>
-        <div class="row pick-actions" hidden>
+        <div class="pick-actions" hidden>
           <button class="primary" data-act="add-selected">選んだファイルを追加</button>
           <button data-act="pick-cancel">やめる</button>
         </div>
         <div class="status"></div>
         <div class="progress" hidden>
-          <div class="line"><span class="p-count"></span><span class="p-bytes"></span></div>
+          <div class="p-top">
+            <div class="p-pct"></div>
+            <div class="p-side"><div class="p-count"></div><div class="p-bytes"></div></div>
+          </div>
           <div class="meter"><div class="p-bar" style="width: 0"></div></div>
-          <div class="line" style="margin-top: 4px"><span class="p-state"></span><span class="p-err err"></span></div>
+          <div class="tiles" hidden>
+            <div class="tile"><span class="label">速度</span><span class="value t-speed">-</span></div>
+            <div class="tile"><span class="label">残り</span><span class="value t-left">-</span></div>
+            <div class="tile"><span class="label">残り時間</span><span class="value t-eta">-</span></div>
+          </div>
+          <div class="counts"></div>
         </div>
-        <div class="row"><button class="link" data-act="dashboard">専用ページを開く</button></div>
+        <div class="foot">
+          <button class="link" data-act="dashboard">専用ページを開く</button>
+          <button data-act="toggle" hidden>開始</button>
+        </div>
       </div>
     </div>`;
   document.documentElement.append(host);
@@ -164,55 +245,144 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
 
   // ---------- 小さくする（状態は覚えておく） ----------
   const collapseButton = q<HTMLButtonElement>('[data-act="collapse"]');
+  const isCollapsed = () => panel.classList.contains('collapsed');
   const setCollapsed = (collapsed: boolean) => {
     panel.classList.toggle('collapsed', collapsed);
     body.hidden = collapsed;
-    q('.title').hidden = collapsed;
-    mini.hidden = !collapsed || !mini.textContent;
+    mini.hidden = !collapsed || !q('.mini-text').textContent;
     collapseButton.textContent = collapsed ? '＋' : '－';
     collapseButton.title = collapsed ? 'Linkex Motrix を開く' : '小さくする';
   };
   collapseButton.addEventListener('click', () => {
-    const collapsed = !panel.classList.contains('collapsed');
+    const collapsed = !isCollapsed();
     setCollapsed(collapsed);
     void chrome.storage.local.set({ panelCollapsed: collapsed });
   });
   void chrome.storage.local.get('panelCollapsed').then((v) => setCollapsed(v.panelCollapsed === true));
 
+  // ---------- この共有の大きさ ----------
+  const showShareSize = (files: WalkedFile[]) => {
+    const bytes = files.reduce((sum, f) => sum + (f.size ?? 0), 0);
+    const unknown = files.filter((f) => f.size == null).length;
+    q('.share-size').textContent = `${files.length.toLocaleString()}件・${formatBytes(bytes)}${unknown ? `（不明 ${unknown}件）` : ''}`;
+    q('.share').hidden = false;
+  };
+
+  // ---------- 全体の状態（実行中・停止中） ----------
+  let engine: EngineState | undefined;
+  const toggleButton = q<HTMLButtonElement>('[data-act="toggle"]');
+  const renderEngine = () => {
+    const paused = engine?.paused ?? true;
+    const waiting = !paused && /待機|待ち|空き/.test(engine?.message ?? '');
+    const pill = q('.engine-pill');
+    pill.textContent = paused ? '停止中' : waiting ? '待機中' : '実行中';
+    pill.className = `pill engine-pill ${paused ? '' : waiting ? 'waiting' : 'running'}`;
+    pill.title = engine?.message ?? '';
+    toggleButton.textContent = paused ? '開始' : '一時停止';
+    toggleButton.dataset.icon = paused ? 'play' : 'pause';
+    toggleButton.className = paused ? 'primary' : '';
+  };
+  toggleButton.addEventListener('click', () =>
+    busy(toggleButton, async () => {
+      const res = await send({ type: engine?.paused === false ? 'queue.pause' : 'queue.start' });
+      if (!res.ok) throw new Error(res.error);
+    }),
+  );
+
   // ---------- このリンクの進み具合 ----------
-  const renderProgress = (all: QueueItem[]) => {
-    const mine = all.filter((i) => i.shareToken === token);
-    queued = new Map(mine.map((i) => [i.sourceFileId, i]));
-    if (walked && !list.hidden) markQueued();
+  let mine: QueueItem[] = [];
+  /** Motrixから取った今の進み具合（gid → 取得済みバイト・速度） */
+  let live = new Map<string, { completed: number; speed: number }>();
+
+  const chip = (cls: string, label: string, n: number) => {
+    const e = document.createElement('span');
+    e.className = cls;
+    const b = document.createElement('b');
+    b.textContent = String(n);
+    e.append(`${label} `, b);
+    return e;
+  };
+
+  const renderProgress = () => {
     const box = q<HTMLDivElement>('.progress');
     box.hidden = mine.length === 0;
+    toggleButton.hidden = mine.length === 0;
     if (mine.length === 0) {
-      mini.textContent = '';
+      q('.mini-text').textContent = '';
       mini.hidden = true;
       return;
     }
-    const s = summarizeQueue(mine);
+    const completed = new Map([...live].map(([gid, p]) => [gid, p.completed]));
+    const s = summarizeQueue(mine, completed);
     const target = mine.length - s.counts.skipped;
-    q('.p-count').textContent = `このリンク: ${s.counts.done} / ${target}件 完了`;
+    const pct = percent(s.bytesDone, s.bytesTotal);
+    q('.p-pct').innerHTML = `${Math.floor(pct)}<small>%</small>`;
+    q('.p-count').textContent = `${s.counts.done} / ${target}件 完了`;
     q('.p-bytes').textContent = `${formatBytes(s.bytesDone)} / ${formatBytes(s.bytesTotal)}`;
-    q('.p-bar').style.width = `${target ? (s.counts.done / target) * 100 : 0}%`;
-    const parts: string[] = [];
-    if (s.counts.active) parts.push(`処理中 ${s.counts.active}`);
-    if (s.counts.waiting) parts.push(`待ち ${s.counts.waiting}`);
-    if (s.counts.skipped) parts.push(`省略 ${s.counts.skipped}`);
-    q('.p-state').textContent = parts.join('・') || (s.counts.done === target && !s.counts.error ? 'すべて完了' : '');
-    q('.p-err').textContent = s.counts.error ? `失敗 ${s.counts.error}` : '';
-    mini.textContent = `${s.counts.done}/${target}`;
-    mini.hidden = !panel.classList.contains('collapsed');
+    q('.p-bar').style.width = `${pct}%`;
+
+    let speed = 0;
+    for (const item of mine) if (item.gid) speed += live.get(item.gid)?.speed ?? 0;
+    const busyNow = s.counts.active + s.counts.waiting > 0;
+    q('.tiles').hidden = !busyNow;
+    q('.t-speed').textContent = speed > 0 ? formatSpeed(speed) : '-';
+    q('.t-left').textContent = s.bytesRemaining > 0 ? formatBytes(s.bytesRemaining) : '-';
+    q('.t-eta').textContent = s.bytesRemaining > 0 && speed > 0 ? formatEta(s.bytesRemaining, speed) : '-';
+
+    q('.counts').replaceChildren(
+      ...[
+        s.counts.active ? chip('c-active', '処理中', s.counts.active) : null,
+        s.counts.waiting ? chip('c-waiting', '待ち', s.counts.waiting) : null,
+        chip('c-done', '完了', s.counts.done),
+        s.counts.skipped ? chip('c-skipped', '省略', s.counts.skipped) : null,
+        s.counts.error ? chip('c-error', '失敗', s.counts.error) : null,
+      ].filter((c): c is HTMLSpanElement => c !== null),
+    );
+
+    q('.mini-text').textContent = `${Math.floor(pct)}%・${s.counts.done}/${target}`;
+    q<HTMLSpanElement>('.ring').style.setProperty('--p', `${pct}%`);
+    mini.hidden = !isCollapsed();
   };
-  void chrome.storage.local.get(QUEUE_KEY).then((v) => renderProgress((v[QUEUE_KEY] as QueueItem[] | undefined) ?? []));
-  const onStorage = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-    if (area === 'local' && changes[QUEUE_KEY]) {
-      renderProgress((changes[QUEUE_KEY].newValue as QueueItem[] | undefined) ?? []);
+
+  const onQueue = (all: QueueItem[]) => {
+    mine = all.filter((i) => i.shareToken === token);
+    queued = new Map(mine.map((i) => [i.sourceFileId, i]));
+    if (walked && !list.hidden) markQueued();
+    renderProgress();
+  };
+
+  // ダウンロード中のファイルがあり、ページが見えているときだけ、Motrixに速度を聞きに行く
+  const speedTimer = setInterval(async () => {
+    if (document.visibilityState !== 'visible' || !mine.some((i) => i.state === 'downloading')) {
+      if (live.size) {
+        live = new Map();
+        renderProgress();
+      }
+      return;
     }
-    if (area === 'local' && changes.walkProgress && loading) {
+    const res = await send<MotrixLive>({ type: 'motrix.active' });
+    live = new Map(
+      res.ok ? res.data.active.map((a) => [a.gid, { completed: a.completedLength, speed: a.downloadSpeed }]) : [],
+    );
+    renderProgress();
+  }, 1500);
+
+  void chrome.storage.local.get([QUEUE_KEY, ENGINE_KEY]).then((v) => {
+    engine = v[ENGINE_KEY] as EngineState | undefined;
+    renderEngine();
+    onQueue((v[QUEUE_KEY] as QueueItem[] | undefined) ?? []);
+  });
+  const onStorage = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+    if (area !== 'local') return;
+    if (changes[QUEUE_KEY]) onQueue((changes[QUEUE_KEY].newValue as QueueItem[] | undefined) ?? []);
+    if (changes[ENGINE_KEY]) {
+      engine = changes[ENGINE_KEY].newValue as EngineState | undefined;
+      renderEngine();
+    }
+    if (changes.walkProgress && loading) {
       const p = (changes.walkProgress.newValue as Record<string, WalkProgress> | undefined)?.[token];
-      if (p) setStatus(`共有の中身を読み込み中… ${p.files.toLocaleString()}件・${formatBytes(p.bytes)}（フォルダ ${p.folders}）`);
+      if (p?.phase === 'tab') setStatus('Linkexのタブを準備中…');
+      else if (p) setStatus(`共有の中身を読み込み中… ${p.files.toLocaleString()}件・${formatBytes(p.bytes)}（フォルダ ${p.folders}）`);
     }
   };
   chrome.storage.onChanged.addListener(onStorage);
@@ -225,8 +395,9 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
   const prefetch = () => {
     if (prefetched) return;
     prefetched = true;
-    void send({ type: 'share.walk', token }).then((res) => {
-      if (!res.ok) prefetched = false;
+    void send<{ shareName: string; files: WalkedFile[] }>({ type: 'share.walk', token }).then((res) => {
+      if (res.ok) showShareSize(res.data.files);
+      else prefetched = false;
     });
   };
   const withLoading = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -307,6 +478,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
       const res = await withLoading(() => send<{ shareName: string; files: WalkedFile[] }>({ type: 'share.walk', token }));
       if (!res.ok) throw new Error(res.error);
       walked = res.data;
+      showShareSize(walked.files);
       list.replaceChildren(
         ...walked.files.map((f, index) => {
           const row = document.createElement('label');
@@ -340,13 +512,8 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
       pickHead.hidden = false;
       const selectable = markQueued();
       const already = walked.files.length - selectable;
-      const total = walked.files.reduce((sum, f) => sum + (f.size ?? 0), 0);
-      const unknown = walked.files.filter((f) => f.size == null).length;
-      setStatus(
-        `全部で ${walked.files.length}件・${formatBytes(total)}${unknown ? `（サイズ不明 ${unknown}件）` : ''}` +
-          `${already ? `
-うち ${already}件はキューにあり` : ''}`,
-      );
+      // 全体の件数とサイズは「この共有」の欄に出している
+      setStatus(already ? `うち ${already}件はキューにあり` : '');
     }),
   );
 
@@ -385,7 +552,13 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
     void send({ type: 'dashboard.open' });
   });
 
-  return { host, dispose: () => chrome.storage.onChanged.removeListener(onStorage) };
+  return {
+    host,
+    dispose: () => {
+      chrome.storage.onChanged.removeListener(onStorage);
+      clearInterval(speedTimer);
+    },
+  };
 }
 
 // 共有ページはページ遷移せずにURLが変わることがあるので、URLの変化を見て付け直す

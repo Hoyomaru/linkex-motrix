@@ -10,8 +10,8 @@ import { watchBadge } from './badge';
 import { createMenus, setupMenuClicks } from './menus';
 import { setupNotificationClick } from './notify';
 
-chrome.runtime.onMessage.addListener((message: Request, _sender, sendResponse) => {
-  handle(message)
+chrome.runtime.onMessage.addListener((message: Request, sender, sendResponse) => {
+  handle(message, sender.tab?.id)
     .then((data) => sendResponse({ ok: true, data } satisfies Response))
     .catch((e: unknown) => sendResponse({ ok: false, error: String((e as Error)?.message ?? e) } satisfies Response));
   return true; // 非同期で応答する
@@ -64,7 +64,8 @@ async function resumeIfRunning() {
   if (!engine.paused) kick();
 }
 
-async function handle(req: Request): Promise<unknown> {
+/** pageTabId: 頼んできたタブ（共有ページのパネルから頼まれたとき、そのページの中で共有を読むのに使う） */
+async function handle(req: Request, pageTabId?: number): Promise<unknown> {
   switch (req.type) {
     case 'linkex.call': {
       const result = await callLinkex({ method: req.method, path: req.path, params: req.params, data: req.data });
@@ -100,9 +101,9 @@ async function handle(req: Request): Promise<unknown> {
       return probeCdn(req.url);
 
     case 'queue.add':
-      return enqueueShares(req.text);
+      return enqueueShares(req.text, pageTabId);
     case 'share.walk': {
-      const res = await walkShareInTab(req.token);
+      const res = await walkShareInTab(req.token, { pageTabId });
       if (!res.ok) throw new Error(res.error);
       return { shareName: res.shareName, files: res.files };
     }

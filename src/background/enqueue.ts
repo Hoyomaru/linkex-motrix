@@ -25,7 +25,7 @@ export interface WalkedShare {
 const SHARE_CONCURRENCY = 3;
 
 /** 貼り付けたURL（複数可）の共有を読み、全ファイルをキューに追加する */
-export async function enqueueShares(text: string): Promise<EnqueueResult> {
+export async function enqueueShares(text: string, pageTabId?: number): Promise<EnqueueResult> {
   const startedAt = Date.now();
   const { tokens, invalid } = parseShareTokens(text);
   const result: EnqueueResult = { added: 0, addedBytes: 0, alreadyQueued: 0, invalid, failed: [], elapsedMs: 0 };
@@ -37,7 +37,7 @@ export async function enqueueShares(text: string): Promise<EnqueueResult> {
     while (nextIndex < tokens.length) {
       const index = nextIndex++;
       const token = tokens[index];
-      const res = await walkShareInTab(token).catch((e) => ({ ok: false as const, error: String(e?.message ?? e) }));
+      const res = await walkShareInTab(token, { pageTabId }).catch((e) => ({ ok: false as const, error: String(e?.message ?? e) }));
       if (res.ok) {
         walked[index] = { token, shareName: res.shareName, files: res.files };
       } else {

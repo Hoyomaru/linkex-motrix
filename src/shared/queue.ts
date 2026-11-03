@@ -46,6 +46,8 @@ export interface QueueItem {
   /** 保存前にあった自分のファイルのID。自分が作ったコピーだけを消すために使う */
   beforeIds?: string[];
   copyStartedAt?: number;
+  /** Linkex側の保存が終わった時刻（ここから一定時間コピーが見つからなければ保存し直す） */
+  copiedAt?: number;
   /** 自分のストレージに作られたコピーのID */
   destFileId?: string;
   gid?: string;

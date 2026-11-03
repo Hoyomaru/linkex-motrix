@@ -38,14 +38,17 @@ export type WalkResult =
  */
 export async function linkexBridgeWalkShare(token: string, concurrency: number): Promise<WalkResult> {
   try {
-    const w = window as unknown as { __linkexMotrixClient?: any };
-    if (!w.__linkexMotrixClient) {
-      const pattern = /\/drive\/assets\/js\/index-[^/]+\.js(\?.*)?$/;
+    // ドライブのページでも共有ページでも動く。共有の中身はログインなしで読めるので、
+    // 共有ページ（/landing/assets/js/index-*.js）の通信用の部品でもよい
+    const w = window as unknown as { __linkexMotrixWalkClient?: any };
+    if (!w.__linkexMotrixWalkClient) {
+      const sources = [
+        ...Array.from(document.querySelectorAll<HTMLScriptElement>('script[type="module"][src]')).map((s) => s.src),
+        ...performance.getEntriesByType('resource').map((e) => e.name),
+      ];
       const src =
-        Array.from(document.querySelectorAll<HTMLScriptElement>('script[type="module"][src]'))
-          .map((s) => s.src)
-          .find((s) => pattern.test(s)) ??
-        performance.getEntriesByType('resource').map((e) => e.name).find((n) => pattern.test(n));
+        sources.find((s) => /\/drive\/assets\/js\/index-[^/]+\.js(\?.*)?$/.test(s)) ??
+        sources.find((s) => /\/landing\/assets\/js\/index-[^/]+\.js(\?.*)?$/.test(s));
       if (!src) return { ok: false, error: 'index_not_found' };
       const mod: Record<string, unknown> = await import(/* @vite-ignore */ src);
       const client = Object.values(mod).find((v: any) =>
@@ -53,9 +56,9 @@ export async function linkexBridgeWalkShare(token: string, concurrency: number):
         v.instance && typeof v.instance.request === 'function',
       );
       if (!client) return { ok: false, error: 'client_not_found' };
-      w.__linkexMotrixClient = client;
+      w.__linkexMotrixWalkClient = client;
     }
-    const client = w.__linkexMotrixClient;
+    const client = w.__linkexMotrixWalkClient;
     const config = { skipGlobalMessage: true };
     let requests = 0;
 
@@ -91,8 +94,11 @@ export async function linkexBridgeWalkShare(token: string, concurrency: number):
               throw new Error(`${path}: ${res.message} (code ${res.code})`);
             }
             return res?.data;
-          } catch (e) {
-            if (attempt >= 2) throw e;
+          } catch (e: any) {
+            // やり直すのは速度制限・サーバー側の失敗・通信の失敗だけ（「見つからない」などはすぐ返す）
+            const status = Number(e?.code ?? e?.status ?? e?.response?.status) || 0;
+            const temporary = status === 0 || status === 429 || status >= 500;
+            if (!temporary || attempt >= 2) throw e;
             await wait(800 * (attempt + 1));
           }
         }
@@ -125,8 +131,11 @@ export async function linkexBridgeWalkShare(token: string, concurrency: number):
         if (folder) {
           if (job.depth < 30) subs.push({ id: String(f.id), folders: [...job.folders, String(f.name ?? '')], depth: job.depth + 1 });
         } else {
-          const size = Number(f.size);
-          const hash = f.hash?.vgroup ?? f.vgroup ?? null;
+          // 一覧の size は実際の中身とずれていることがある。サムネイルのURL（…/<md5>/<実サイズ>）に
+          // 本当のサイズと中身のハッシュが入っているので、取れればそちらを使う
+          const pool = /\/pool\/pub\/(?:[0-9a-f]{2}\/){3}([0-9a-f]{32})\/(\d+)/.exec(String(f.cover ?? ''));
+          const size = pool ? Number(pool[2]) : Number(f.size);
+          const hash = f.hash?.vgroup ?? f.vgroup ?? (pool ? `${pool[1]}_${pool[2]}` : null);
           own.push({
             id: String(f.id),
             name: String(f.name ?? f.id),

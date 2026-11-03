@@ -9,6 +9,8 @@ import { logEvent, readEngine, readHashes, readQueue, rememberHash, updateItem, 
 
 const MAX_ATTEMPTS = 3;
 const COPY_TIMEOUT_MS = 5 * 60_000;
+/** 保存が終わってから、コピーが一覧に出てくるのを待つ時間 */
+const COPY_FIND_MS = 60_000;
 const IDLE_WAIT_MS = 3_000;
 const TRAFFIC_RECHECK_MS = 5 * 60_000;
 const CAPACITY_WAIT_MS = 30_000;
@@ -194,6 +196,7 @@ async function stepCopy(item: QueueItem): Promise<void> {
     state: 'copying',
     beforeIds: [...before.keys()],
     copyStartedAt: Date.now(),
+    copiedAt: undefined,
     destFileId: undefined,
     gid: undefined,
     note: undefined,
@@ -203,6 +206,7 @@ async function stepCopy(item: QueueItem): Promise<void> {
   const res = await api.copyFromShare(item.shareToken, item.sourceFileId);
   const taskId = res?.taskId ?? res?.task?.id;
   if (taskId) await waitTask(String(taskId));
+  await updateItem(item.id, { copiedAt: Date.now() });
 
   const fresh = (await readQueue()).find((i) => i.id === item.id);
   if (fresh) await stepFindCopy(fresh);
@@ -226,26 +230,36 @@ async function waitTask(taskId: string): Promise<void> {
   throw new Error('保存が5分以内に終わりませんでした');
 }
 
-/** 保存前になかったファイルのうち、名前とサイズが一致するものを「自分が作ったコピー」とみなす */
+/**
+ * 保存前になかったファイルのうち、名前が同じものを「自分が作ったコピー」とみなす。
+ * 共有一覧のサイズは実際とずれることがあるので、サイズが合うものを優先し、
+ * 合うものがなくても同じ名前の新しいファイルが1つだけならそれを使う。
+ */
 async function stepFindCopy(item: QueueItem): Promise<void> {
   const before = new Set(item.beforeIds ?? []);
   const now = await listRootIds();
-  const candidates = [...now.entries()]
-    .filter(([id]) => !before.has(id))
-    .map(([, f]) => f)
+  const fresh = [...now.entries()].filter(([id]) => !before.has(id)).map(([, f]) => f);
+  const sameName = fresh
     .filter((f) => String(f.name) === item.name)
-    .filter((f) => item.size === null || Number(f.size) === item.size)
     .sort((a, b) => Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0));
+  const sizeOf = (f: any) => Number(f.size);
+  const exact = sameName.filter((f) => item.size === null || sizeOf(f) === item.size);
+  const found = exact[0] ?? (sameName.length === 1 ? sameName[0] : undefined);
 
-  if (candidates.length === 0) {
-    const waited = Date.now() - (item.copyStartedAt ?? 0);
-    if (waited < COPY_TIMEOUT_MS) {
+  if (!found) {
+    // 保存が終わってから少し待っても出てこなければ、保存し直す（再試行するとすぐ見つかることが多い）
+    const since = item.copiedAt ?? item.copyStartedAt ?? 0;
+    const limit = item.copiedAt ? COPY_FIND_MS : COPY_TIMEOUT_MS;
+    if (Date.now() - since < limit) {
       await sleep(2_000);
       return; // 次の周回でもう一度探す
     }
-    throw new Error('保存したはずのファイルが見つかりません');
+    const seen = fresh.slice(0, 5).map((f) => `${f.name}（${formatBytes(sizeOf(f))}）`).join('、');
+    throw new Error(
+      `保存したはずのファイルが見つかりません（新しく増えたファイル ${fresh.length}件${seen ? `: ${seen}` : ''}）`,
+    );
   }
-  await updateItem(item.id, { state: 'copied', destFileId: String(candidates[0].id) });
+  await updateItem(item.id, { state: 'copied', destFileId: String(found.id) });
 }
 
 async function stepSend(item: QueueItem): Promise<void> {
