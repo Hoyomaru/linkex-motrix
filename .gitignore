@@ -1,2 +1,4 @@
 node_modules/
 dist/
+# 手元だけに置くもの（調査メモ・運営とのやり取り・バックアップ）
+private/

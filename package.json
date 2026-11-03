@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "description": "Linkexの共有ファイルを自分のストレージ経由でMotrixに渡すEdge拡張機能",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hoyomaru/linkex-motrix.git"
+  },
   "scripts": {
     "build": "tsc --noEmit && vite build && vite build -c vite.content.config.ts",
     "watch": "vite build --watch",

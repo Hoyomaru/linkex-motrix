@@ -1,8 +1,18 @@
 # Linkex Motrix
 
-Linkexの共有ファイルを、自分のストレージに保存 → Motrixでダウンロード → 完全削除、の流れで落とすEdge拡張機能。
+<img src="public/icons/icon-128.png" alt="" width="64" height="64" align="right" />
 
-要件と調査結果は [linkex-research.md](linkex-research.md)、運営からの回答は [docs/support-replies.md](docs/support-replies.md)。
+[Linkex](https://www.linkex.io/) の共有ファイルを、自分のストレージに保存 → [Motrix](https://motrix.app/) でダウンロード → 完全削除、の流れで落とすEdge拡張機能。共有リンクをまとめて登録しておけば、1件ずつ順番に処理する。
+
+> [!IMPORTANT]
+> これはLinkex（LINKINFLU PTE. LTD.）の公式ツールではなく、関係もありません。個人利用の範囲で、Linkexの利用規約を守って使ってください。Linkex側の仕様が変わると動かなくなることがあります。利用は自己責任でお願いします。
+
+## 必要なもの
+
+- Microsoft Edge（Chromium版。Chromeでもおそらく動くが未確認）
+- [Motrix](https://motrix.app/)（中のaria2のRPCを使う）
+- Linkexのアカウント（共有ファイルは自分のストレージに保存しないと落とせないため、ログインが必要）
+- ビルドする場合は Node.js
 
 ## ビルド
 
@@ -44,7 +54,7 @@ Linkexにはログインしておくこと。処理中はLinkexのドライブ�
 | 基準フォルダ | 空（Motrixの既定） | この下に `共有名\共有内のフォルダ` を作る |
 | APIを呼ぶ間隔 | 300ミリ秒 | 一時的な速度制限を避けるため |
 | 同時ダウンロード数 | 3 | Motrixで同時に落とす数 |
-| 転送量の上限で一時停止 | オン | 公式Web版と同じ動き。運営の回答（docs/support-replies.md）に従うならオフ |
+| 転送量の上限で一時停止 | オン | 公式Web版と同じ動き。オフにすると転送量の表示に関係なく処理を続ける |
 | 通知を出す | オン | すべて終わったとき・止まったとき |
 | 右クリックで追加したらすぐ開始 | オン | 右クリックメニューから追加したときの動き |
 
@@ -70,3 +80,7 @@ Linkexにはログインしておくこと。処理中はLinkexのドライブ�
   - `motrix.ts`：aria2 の JSON-RPC
 - **専用ページ**（`dashboard.html`）とポップアップ（`popup.html`）
 - **共有ページのパネル**（`src/content/share-page.ts`）：Shadow DOM の中に描くので、Linkexの画面を崩さない
+
+## ライセンス
+
+[MIT](LICENSE)
