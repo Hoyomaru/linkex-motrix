@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsc --noEmit && vite build && vite build -c vite.content.config.ts",
-    "watch": "vite build --watch",
+    "watch": "node scripts/watch.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
