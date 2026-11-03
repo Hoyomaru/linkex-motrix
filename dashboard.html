@@ -8,128 +8,196 @@
     <link rel="stylesheet" href="/src/dashboard/dashboard.css" />
   </head>
   <body>
-    <header>
-      <h1>Linkex Motrix</h1>
-      <span class="muted">共有ファイルを Motrix へ</span>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="status-line">
+          <h1>Linkex Motrix</h1>
+          <span id="engine-pill" class="pill">停止中</span>
+          <span id="engine-message" class="muted engine-message"></span>
+          <button id="engine-toggle" class="primary toggle">開始</button>
+        </div>
+        <div class="metrics">
+          <div class="metric">
+            <span class="label">速度</span>
+            <span class="value" id="m-speed">-</span>
+          </div>
+          <div class="metric">
+            <span class="label">Motrix</span>
+            <span class="value"><span id="m-motrix-dot" class="dot"></span><span id="m-motrix">確認中</span></span>
+          </div>
+          <div class="metric wide" title="Linkexの自分のストレージ">
+            <span class="label">容量</span>
+            <span class="value" id="usage-text">-</span>
+            <div class="meter"><div id="usage-bar" style="width: 0"></div></div>
+          </div>
+          <div class="metric wide" id="traffic-metric">
+            <span class="label">転送量（直近24時間・目安）</span>
+            <span class="value" id="traffic-text">-</span>
+            <div class="meter"><div id="traffic-bar" style="width: 0"></div></div>
+          </div>
+        </div>
+        <nav class="tabs" role="tablist">
+          <a href="#queue" data-tab="queue" role="tab">キュー <span id="tab-badge-error" class="badge" hidden></span></a>
+          <a href="#log" data-tab="log" role="tab">処理ログ</a>
+          <a href="#settings" data-tab="settings" role="tab">設定</a>
+          <a href="#tools" data-tab="tools" role="tab">確認用</a>
+        </nav>
+      </div>
     </header>
 
     <main>
-      <section class="grid-2">
-        <div class="panel">
-          <h2>Linkex</h2>
-          <div class="stat"><span>容量</span><span id="usage-text">-</span></div>
-          <div class="meter"><div id="usage-bar" style="width: 0"></div></div>
-          <div class="stat"><span>転送量（直近24時間）</span><span id="traffic-text">-</span></div>
-          <div class="meter"><div id="traffic-bar" style="width: 0"></div></div>
-          <div class="row" style="margin-top: 12px">
-            <button id="linkex-refresh">更新</button>
-            <button id="linkex-open">Linkexのタブを表示</button>
+      <!-- ========== キュー ========== -->
+      <div data-page="queue" class="page">
+        <section class="panel">
+          <textarea id="queue-input" rows="2" placeholder="共有URLを貼り付け（複数なら1行に1つ）　https://www.linkex.io/f/xxxx ・ https://l2e.click/d/xxxx"></textarea>
+          <div class="row" style="margin-top: 8px">
+            <button id="queue-add" class="primary">キューに追加</button>
+            <label class="check"><input type="checkbox" id="add-autostart" checked /> 追加したら開始する</label>
+            <span id="add-result" class="add-result"></span>
           </div>
-        </div>
+        </section>
 
-        <div class="panel">
-          <h2>Motrix</h2>
-          <div id="motrix-status" class="muted">未確認</div>
-          <div class="row" style="margin-top: 12px">
-            <button id="motrix-test">接続テスト</button>
+        <section class="panel overview">
+          <div class="spread">
+            <strong id="ov-count">キューは空です</strong>
+            <span id="ov-bytes" class="muted"></span>
           </div>
-        </div>
-      </section>
+          <div class="meter big"><div id="ov-bar" style="width: 0"></div></div>
+          <div class="spread muted small">
+            <span id="ov-speed"></span>
+            <span id="ov-eta"></span>
+          </div>
+        </section>
 
-      <section class="panel">
-        <h2>キュー</h2>
-        <textarea id="queue-input" rows="4" placeholder="共有URLを1行に1つずつ貼り付け（https://www.linkex.io/f/xxxx / https://l2e.click/d/xxxx）"></textarea>
-        <div class="row" style="margin-top: 8px">
-          <button id="queue-add">キューに追加</button>
-          <button id="queue-start" class="primary">開始</button>
-          <button id="queue-pause">一時停止</button>
-          <button id="queue-clear">完了・省略を一覧から消す</button>
-        </div>
-        <div class="row" style="margin-top: 10px; justify-content: space-between">
-          <span id="engine-message" class="muted">-</span>
-          <span id="queue-counts" class="muted"></span>
-        </div>
-        <table id="queue-table" class="queue" hidden>
-          <thead><tr><th>ファイル</th><th>サイズ</th><th>状態</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </section>
-
-      <section class="panel">
-        <div class="row" style="justify-content: space-between">
-          <h2 style="margin: 0">処理ログ</h2>
-          <button id="events-clear">消去</button>
-        </div>
-        <ol id="events" class="events"></ol>
-      </section>
-
-      <section class="panel">
-        <h2>設定</h2>
-        <form id="settings" class="settings">
-          <label>Motrixの接続先<input type="text" name="rpcUrl" /></label>
-          <label>RPCシークレット<input type="password" name="rpcSecret" autocomplete="off" /></label>
-          <label>ダウンロード先の基準フォルダ（空ならMotrixの既定）<input type="text" name="downloadDir" placeholder="例: D:\Downloads\Linkex" /></label>
-          <label>APIを呼ぶ間隔（ミリ秒）<input type="number" name="apiIntervalMs" min="0" step="50" /></label>
-          <label>同時ダウンロード数<input type="number" name="maxDownloads" min="1" max="16" /></label>
-          <label class="check"><input type="checkbox" name="pauseOnTrafficLimit" /> 転送量の上限に達したら一時停止する（公式Web版と同じ動き）</label>
-          <div class="row"><button type="submit" class="primary">保存</button><span id="settings-saved" class="muted"></span></div>
-        </form>
-      </section>
-
-      <details class="debug">
-      <summary>確認用の操作（Linkex・Motrixの動作を1つずつ試す）</summary>
-      <div class="debug-body">
-
-      <section class="panel">
-        <h2>1. 共有リンクの中身</h2>
-        <div class="row">
-          <input type="text" id="share-input" placeholder="https://www.linkex.io/f/xxxx または https://l2e.click/d/xxxx" style="flex: 1" />
-          <button id="share-load" class="primary">表示</button>
-        </div>
-        <div id="share-path" class="muted" style="margin-top: 8px"></div>
-        <table id="share-table" hidden>
-          <thead><tr><th>名前</th><th>サイズ</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </section>
-
-      <section class="panel">
-        <h2>2. 自分のファイル</h2>
-        <div class="row"><button id="mine-load">一覧を更新</button></div>
-        <table id="mine-table" hidden>
-          <thead><tr><th>名前</th><th>サイズ</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </section>
-
-      <section class="panel">
-        <h2>3. ゴミ箱</h2>
-        <p class="note">「完全削除」は取り消せません。押すと確認画面が出ます。</p>
-        <div class="row"><button id="trash-load">一覧を更新</button></div>
-        <table id="trash-table" hidden>
-          <thead><tr><th>名前</th><th>サイズ</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </section>
-
-      <section class="panel">
-        <h2>ダウンロードURLの確認</h2>
-        <p class="muted">「URL取得」で発行したURLを記録します。時間が経ってから、または完全削除の後に「まだ使えるか確認」を押してください。</p>
-        <table id="urls-table" hidden>
-          <thead><tr><th>ファイル</th><th>発行</th><th>結果</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </section>
-
-      <section class="panel">
-        <div class="row" style="justify-content: space-between">
-          <h2 style="margin: 0">ログ</h2>
-          <button id="log-clear">消去</button>
-        </div>
-        <pre id="log" class="mono log"></pre>
-      </section>
+        <section class="panel">
+          <div class="toolbar">
+            <div class="chips" id="filters"></div>
+            <div class="row">
+              <input type="search" id="queue-search" placeholder="ファイル名で絞り込み" />
+              <button id="retry-failed" hidden>失敗をすべて再試行</button>
+              <button id="queue-clear">完了・省略を消す</button>
+            </div>
+          </div>
+          <div id="queue-groups"></div>
+          <p id="queue-empty" class="empty">キューは空です。上の欄に共有URLを貼るか、共有ページのパネルから追加してください。</p>
+        </section>
       </div>
-      </details>
+
+      <!-- ========== 処理ログ ========== -->
+      <div data-page="log" class="page" hidden>
+        <section class="panel">
+          <div class="spread">
+            <div class="chips" id="event-filters">
+              <button class="chip active" data-level="all">すべて</button>
+              <button class="chip" data-level="problem">警告・エラーだけ</button>
+            </div>
+            <button id="events-clear">消去</button>
+          </div>
+          <ol id="events" class="events"></ol>
+        </section>
+      </div>
+
+      <!-- ========== 設定 ========== -->
+      <div data-page="settings" class="page" hidden>
+        <form id="settings" class="settings-form">
+          <section class="panel">
+            <h2>Motrix</h2>
+            <div class="fields">
+              <label>接続先<input type="text" name="rpcUrl" /></label>
+              <label>RPCシークレット<input type="password" name="rpcSecret" autocomplete="off" /></label>
+            </div>
+            <div class="row" style="margin-top: 10px">
+              <button type="button" id="motrix-test">接続テスト</button>
+              <span id="motrix-status" class="muted"></span>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>保存先</h2>
+            <div class="fields">
+              <label class="full">基準フォルダ（空ならMotrixの既定のフォルダ）<input type="text" name="downloadDir" placeholder="例: D:\Downloads\Linkex" /></label>
+            </div>
+            <p class="hint">この下に「共有名\共有内のフォルダ\ファイル」の形で保存されます。</p>
+          </section>
+
+          <section class="panel">
+            <h2>動作</h2>
+            <div class="fields">
+              <label>同時ダウンロード数<input type="number" name="maxDownloads" min="1" max="16" /></label>
+              <label>APIを呼ぶ間隔（ミリ秒）<input type="number" name="apiIntervalMs" min="0" step="50" /></label>
+              <label class="check full"><input type="checkbox" name="pauseOnTrafficLimit" /> 転送量の上限に達したら一時停止する（公式Web版と同じ動き）</label>
+            </div>
+          </section>
+
+          <div class="save-bar">
+            <button type="submit" class="primary">保存</button>
+            <span id="settings-saved" class="muted"></span>
+          </div>
+        </form>
+
+        <section class="panel" style="margin-top: 16px">
+          <h2>Linkex</h2>
+          <p class="hint">署名のために、固定タブでLinkexのドライブを開いています。ログインが切れたときは、このタブでログインし直してください。</p>
+          <div class="row">
+            <button id="linkex-open">Linkexのタブを表示</button>
+            <button id="linkex-refresh">容量・転送量を更新</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- ========== 確認用 ========== -->
+      <div data-page="tools" class="page" hidden>
+        <p class="note">Linkex・Motrixの動きを1つずつ試すための画面です。ふだんは使いません。</p>
+
+        <section class="panel">
+          <h2>1. 共有リンクの中身</h2>
+          <div class="row">
+            <input type="text" id="share-input" placeholder="https://www.linkex.io/f/xxxx または https://l2e.click/d/xxxx" style="flex: 1" />
+            <button id="share-load" class="primary">表示</button>
+          </div>
+          <div id="share-path" class="muted" style="margin-top: 8px"></div>
+          <table id="share-table" hidden>
+            <thead><tr><th>名前</th><th>サイズ</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </section>
+
+        <section class="panel">
+          <h2>2. 自分のファイル</h2>
+          <div class="row"><button id="mine-load">一覧を更新</button></div>
+          <table id="mine-table" hidden>
+            <thead><tr><th>名前</th><th>サイズ</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </section>
+
+        <section class="panel">
+          <h2>3. ゴミ箱</h2>
+          <p class="note">「完全削除」は取り消せません。押すと確認画面が出ます。</p>
+          <div class="row"><button id="trash-load">一覧を更新</button></div>
+          <table id="trash-table" hidden>
+            <thead><tr><th>名前</th><th>サイズ</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </section>
+
+        <section class="panel">
+          <h2>ダウンロードURLの確認</h2>
+          <p class="muted">「URL取得」で発行したURLを記録します。時間が経ってから、または完全削除の後に「まだ使えるか確認」を押してください。</p>
+          <table id="urls-table" hidden>
+            <thead><tr><th>ファイル</th><th>発行</th><th>結果</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </section>
+
+        <section class="panel">
+          <div class="spread">
+            <h2 style="margin: 0">ログ</h2>
+            <button id="log-clear">消去</button>
+          </div>
+          <pre id="log" class="mono log"></pre>
+        </section>
+      </div>
     </main>
 
     <script type="module" src="/src/dashboard/dashboard.ts"></script>

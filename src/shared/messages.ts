@@ -7,6 +7,7 @@ export type Request =
   | { type: 'motrix.version' }
   | { type: 'motrix.add'; url: string; dir?: string; out?: string }
   | { type: 'motrix.status'; gid: string }
+  | { type: 'motrix.active' }
   | { type: 'cdn.probe'; url: string }
   | { type: 'queue.add'; text: string }
   | { type: 'share.walk'; token: string }
@@ -16,12 +17,14 @@ export type Request =
       shareName: string;
       files: { id: string; name: string; size: number | null; hash: string | null; folders: string[] }[];
     }
-  | { type: 'dashboard.open' }
+  | { type: 'dashboard.open'; tab?: string }
   | { type: 'events.clear' }
   | { type: 'queue.start' }
   | { type: 'queue.pause' }
   | { type: 'queue.retry'; id: string }
   | { type: 'queue.remove'; id: string }
+  | { type: 'queue.removeMany'; ids: string[] }
+  | { type: 'queue.retryFailed'; token?: string }
   | { type: 'queue.clearFinished' }
   | { type: 'settings.get' }
   | { type: 'settings.set'; patch: Partial<Settings> };
@@ -42,4 +45,11 @@ export interface LinkexEnvelope<T> {
   code: number;
   message: string;
   data: T;
+}
+
+/** motrix.active の応答。画面で速度と進み具合を出すのに使う */
+export interface MotrixLive {
+  /** Motrix全体のダウンロード速度（バイト/秒） */
+  downloadSpeed: number;
+  active: { gid: string; totalLength: number; completedLength: number; downloadSpeed: number }[];
 }

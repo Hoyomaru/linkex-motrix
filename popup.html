@@ -5,22 +5,74 @@
     <title>Linkex Motrix</title>
     <link rel="stylesheet" href="/src/ui/style.css" />
     <style>
-      body { width: 300px; padding: 14px; }
-      .stat { display: flex; justify-content: space-between; margin-top: 10px; font-size: 13px; }
-      .actions { margin-top: 14px; display: flex; gap: 8px; }
+      body { width: 360px; padding: 14px; font-size: 13px; }
+      h1 { font-size: 15px; }
+      section { margin-top: 12px; }
+      .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+      .count { font-weight: 600; font-variant-numeric: tabular-nums; }
+      .current { list-style: none; margin: 8px 0 0; padding: 0; }
+      .current li { padding: 5px 0; border-top: 1px solid var(--border); }
+      .current .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .current .meter { height: 4px; }
+      .current .live { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+      .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .stats .label { color: var(--muted); font-size: 11px; }
+      .stats .meter { height: 4px; }
+      textarea { font-size: 12px; }
+      .result { font-size: 12px; margin-top: 6px; }
+      .actions { display: flex; gap: 8px; margin-top: 12px; }
+      .actions button { flex: 1; }
+      .error-line { margin-top: 8px; }
+      .error-line a { color: var(--danger); }
     </style>
   </head>
   <body>
-    <h1 style="font-size: 16px">Linkex Motrix</h1>
-    <div class="stat"><span>容量</span><span id="usage">-</span></div>
-    <div class="meter"><div id="usage-bar" style="width: 0"></div></div>
-    <div class="stat"><span>転送量（目安）</span><span id="traffic">-</span></div>
-    <div class="stat"><span>キュー</span><span id="counts">-</span></div>
-    <div id="engine" class="muted" style="margin-top: 8px; font-size: 12px"></div>
-    <div id="error" class="ng" style="margin-top: 10px; font-size: 12px"></div>
+    <div class="spread">
+      <h1>Linkex Motrix</h1>
+      <span id="pill" class="pill">停止中</span>
+    </div>
+    <div id="engine" class="muted small" style="margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"></div>
+
+    <section class="card">
+      <div class="spread">
+        <span id="count" class="count">キューは空です</span>
+        <span id="bytes" class="muted small"></span>
+      </div>
+      <div class="meter"><div id="bar" style="width: 0"></div></div>
+      <div class="spread muted small" style="margin-top: 4px">
+        <span id="speed"></span>
+        <span id="eta"></span>
+      </div>
+      <ul id="current" class="current" hidden></ul>
+      <div id="error-line" class="error-line small" hidden><a href="#" id="error-link"></a></div>
+    </section>
+
+    <section>
+      <textarea id="input" rows="2" placeholder="共有URLを貼り付け（複数なら1行に1つ）"></textarea>
+      <div class="row" style="margin-top: 6px">
+        <button id="add">キューに追加</button>
+        <label class="check small"><input type="checkbox" id="autostart" checked /> 追加したら開始</label>
+      </div>
+      <div id="result" class="result"></div>
+    </section>
+
+    <section class="stats">
+      <div>
+        <div class="label">容量</div>
+        <div id="usage">-</div>
+        <div class="meter"><div id="usage-bar" style="width: 0"></div></div>
+      </div>
+      <div>
+        <div class="label">転送量（目安）</div>
+        <div id="traffic">-</div>
+        <div class="meter"><div id="traffic-bar" style="width: 0"></div></div>
+      </div>
+    </section>
+    <div id="motrix" class="small muted" style="margin-top: 8px"><span id="motrix-dot" class="dot"></span><span id="motrix-text">Motrix 確認中</span></div>
+
     <div class="actions">
-      <button id="toggle">開始</button>
-      <button id="open" class="primary">専用ページを開く</button>
+      <button id="toggle" class="primary">開始</button>
+      <button id="open">専用ページを開く</button>
     </div>
     <script type="module" src="/src/popup/popup.ts"></script>
   </body>

@@ -1,10 +1,10 @@
-import type { Request, Response } from '../shared/messages';
-import { ACTIVE_STATES, FINISHED_STATES } from '../shared/queue';
+import type { MotrixLive, Request, Response } from '../shared/messages';
+import { ACTIVE_STATES, FINISHED_STATES, type QueueItem } from '../shared/queue';
 import { loadSettings, saveSettings } from '../shared/settings';
 import { kick, pause, refreshDownloads, start } from './engine';
 import { addWalkedToQueue, enqueueShares } from './enqueue';
 import { callLinkex, ensureLinkexTab, walkShareInTab } from './linkex-tab';
-import { addDownload, getVersion, tellStatus } from './motrix';
+import { addDownload, getGlobalStat, getVersion, tellActive, tellStatus } from './motrix';
 import { clearEvents, mutateQueue, readEngine } from './store';
 
 chrome.runtime.onMessage.addListener((message: Request, _sender, sendResponse) => {
@@ -60,6 +60,18 @@ async function handle(req: Request): Promise<unknown> {
       return addDownload(req.url, { dir: req.dir, out: req.out });
     case 'motrix.status':
       return tellStatus(req.gid);
+    case 'motrix.active': {
+      const [active, stat] = await Promise.all([tellActive(), getGlobalStat()]);
+      return {
+        downloadSpeed: Number(stat.downloadSpeed) || 0,
+        active: active.map((a) => ({
+          gid: a.gid,
+          totalLength: Number(a.totalLength) || 0,
+          completedLength: Number(a.completedLength) || 0,
+          downloadSpeed: Number(a.downloadSpeed) || 0,
+        })),
+      } satisfies MotrixLive;
+    }
     case 'cdn.probe':
       return probeCdn(req.url);
 
@@ -73,13 +85,15 @@ async function handle(req: Request): Promise<unknown> {
     case 'queue.addFiles':
       return addWalkedToQueue([{ token: req.token, shareName: req.shareName, files: req.files }]);
     case 'dashboard.open': {
-      const url = chrome.runtime.getURL('dashboard.html');
-      const [existing] = await chrome.tabs.query({ url });
+      const base = chrome.runtime.getURL('dashboard.html');
+      const url = req.tab ? `${base}#${req.tab}` : undefined;
+      // タブを切り替えた後は末尾に #log などが付くので、前方一致で探す
+      const existing = (await chrome.tabs.query({})).find((t) => t.url?.startsWith(base));
       if (existing?.id !== undefined) {
-        await chrome.tabs.update(existing.id, { active: true });
+        await chrome.tabs.update(existing.id, url ? { active: true, url } : { active: true });
         if (existing.windowId !== undefined) await chrome.windows.update(existing.windowId, { focused: true });
       } else {
-        await chrome.tabs.create({ url });
+        await chrome.tabs.create({ url: url ?? base });
       }
       return true;
     }
@@ -90,18 +104,20 @@ async function handle(req: Request): Promise<unknown> {
     case 'queue.retry':
       return mutateQueue((items) => {
         const item = items.find((i) => i.id === req.id);
-        if (item && (item.state === 'error' || item.state === 'skipped')) {
-          // 「重複のため省略」を落とし直す場合は、重複判定を外す
-          const force = item.state === 'skipped' || item.force;
-          Object.assign(item, { state: 'retry', attempts: 0, error: undefined, note: undefined, force, updatedAt: Date.now() });
+        if (item) retryItem(item);
+      });
+    case 'queue.retryFailed':
+      return mutateQueue((items) => {
+        let n = 0;
+        for (const item of items) {
+          if (item.state === 'error' && (!req.token || item.shareToken === req.token) && retryItem(item)) n++;
         }
+        return n;
       });
     case 'queue.remove':
-      return mutateQueue((items) => {
-        const index = items.findIndex((i) => i.id === req.id);
-        // 保存中・削除中の件は、ストレージにコピーが残らないよう消させない
-        if (index >= 0 && !ACTIVE_STATES.includes(items[index].state)) items.splice(index, 1);
-      });
+      return mutateQueue((items) => removeItems(items, new Set([req.id])));
+    case 'queue.removeMany':
+      return mutateQueue((items) => removeItems(items, new Set(req.ids)));
     case 'queue.clearFinished':
       return mutateQueue((items) => {
         const keep = items.filter((i) => !FINISHED_STATES.includes(i.state));
@@ -115,6 +131,23 @@ async function handle(req: Request): Promise<unknown> {
     case 'settings.set':
       return saveSettings(req.patch);
   }
+}
+
+/** 失敗・省略した件を、もう一度最初からやり直す状態に戻す */
+function retryItem(item: QueueItem): boolean {
+  if (item.state !== 'error' && item.state !== 'skipped') return false;
+  // 「重複のため省略」を落とし直す場合は、重複判定を外す
+  const force = item.state === 'skipped' || item.force;
+  Object.assign(item, { state: 'retry', attempts: 0, error: undefined, note: undefined, force, updatedAt: Date.now() });
+  return true;
+}
+
+/** 一覧から消す。保存中・削除中の件は、ストレージにコピーが残らないよう消させない */
+function removeItems(items: QueueItem[], ids: Set<string>): number {
+  const keep = items.filter((i) => !ids.has(i.id) || ACTIVE_STATES.includes(i.state));
+  const removed = items.length - keep.length;
+  items.splice(0, items.length, ...keep);
+  return removed;
 }
 
 /** ダウンロードURLがまだ使えるかを、先頭1バイトだけ取得して確かめる */

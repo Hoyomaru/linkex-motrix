@@ -61,15 +61,44 @@ function listOf(data: any): any[] {
   return Array.isArray(data?.list) ? data.list : Array.isArray(data) ? data : [];
 }
 
+// ---------- タブ ----------
+const TABS = ['queue', 'log', 'settings', 'tools'];
+function showTab() {
+  const name = location.hash.slice(1);
+  const tab = TABS.includes(name) ? name : 'queue';
+  document.querySelectorAll<HTMLElement>('[data-page]').forEach((p) => (p.hidden = p.dataset.page !== tab));
+  document.querySelectorAll<HTMLElement>('[data-tab]').forEach((a) => {
+    const active = a.dataset.tab === tab;
+    a.classList.toggle('active', active);
+    a.setAttribute('aria-selected', String(active));
+  });
+}
+window.addEventListener('hashchange', showTab);
+showTab();
+
 // ---------- Linkex の状態 ----------
+function setMeter(barId: string, used: number, total: number) {
+  const ratio = total > 0 ? used / total : 0;
+  const bar = $(barId);
+  bar.style.width = `${Math.min(100, ratio * 100)}%`;
+  bar.parentElement!.className = `meter${ratio >= 1 ? ' ng' : ratio >= 0.8 ? ' warn' : ''}`;
+}
+
 async function refreshLinkex() {
-  const [usage, traffic] = await Promise.all([linkexApi.usage(), linkexApi.traffic()]);
-  $('usage-text').textContent = `${formatBytes(usage.usedSpace)} / ${formatBytes(usage.totalSpace)}`;
-  $('usage-bar').style.width = `${Math.min(100, (usage.usedSpace / usage.totalSpace) * 100)}%`;
-  const reset = traffic.resetTime ? new Date(traffic.resetTime * 1000).toLocaleString() : '-';
-  $('traffic-text').textContent = `${formatBytes(traffic.usedTraffic)} / ${formatBytes(traffic.totalTraffic)}（目安。リセット ${reset}）`;
-  $('traffic-bar').style.width = `${Math.min(100, (traffic.usedTraffic / traffic.totalTraffic) * 100)}%`;
-  log('Linkex 状態', { usage, traffic });
+  try {
+    const [usage, traffic] = await Promise.all([linkexApi.usage(), linkexApi.traffic()]);
+    $('usage-text').textContent = `${formatBytes(usage.usedSpace)} / ${formatBytes(usage.totalSpace)}`;
+    setMeter('usage-bar', usage.usedSpace, usage.totalSpace);
+    const reset = traffic.resetTime ? new Date(traffic.resetTime * 1000).toLocaleString() : '-';
+    $('traffic-text').textContent = `${formatBytes(traffic.usedTraffic)} / ${formatBytes(traffic.totalTraffic)}`;
+    $('traffic-metric').title = `直近24時間の転送量（目安）。リセット ${reset}`;
+    setMeter('traffic-bar', traffic.usedTraffic, traffic.totalTraffic);
+  } catch (e) {
+    $('usage-text').textContent = '取得できません';
+    $('usage-text').title = (e as Error).message;
+    $('traffic-text').textContent = '-';
+    throw e;
+  }
 }
 action($('linkex-refresh'), refreshLinkex);
 action($('linkex-open'), async () => {
@@ -79,8 +108,11 @@ action($('linkex-open'), async () => {
 
 // ---------- Motrix ----------
 action($('motrix-test'), async () => {
-  const res = await send<{ version: string }>({ type: 'motrix.version' });
   const el = $('motrix-status');
+  el.textContent = '確認中…';
+  el.className = 'muted';
+  // 入力中（未保存）の設定ではなく、保存済みの設定で試す
+  const res = await send<{ version: string }>({ type: 'motrix.version' });
   if (res.ok) {
     el.textContent = `接続OK（aria2 ${res.data.version}）`;
     el.className = 'ok';
@@ -116,6 +148,7 @@ form.addEventListener('submit', async (ev) => {
   };
   const res = await send({ type: 'settings.set', patch });
   $('settings-saved').textContent = res.ok ? '保存しました' : `保存に失敗: ${res.error}`;
+  $('settings-saved').className = res.ok ? 'ok' : 'ng';
   setTimeout(() => ($('settings-saved').textContent = ''), 3000);
 });
 
@@ -273,4 +306,10 @@ action($('trash-load'), loadTrash);
 // ---------- 起動時 ----------
 setupQueueView(log);
 void loadSettingsIntoForm();
-refreshLinkex().catch((e) => log(`Linkexの状態を取得できませんでした: ${(e as Error).message}`));
+const refreshQuietly = () =>
+  refreshLinkex().catch((e) => log(`Linkexの状態を取得できませんでした: ${(e as Error).message}`));
+void refreshQuietly();
+// 容量・転送量は1分ごとに取り直す（画面が見えているときだけ）
+setInterval(() => {
+  if (document.visibilityState === 'visible') void refreshQuietly();
+}, 60_000);

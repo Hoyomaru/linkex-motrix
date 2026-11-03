@@ -72,6 +72,16 @@ export async function tellStatus(gid: string): Promise<Aria2Status> {
 
 const STATUS_KEYS = ['gid', 'status', 'totalLength', 'completedLength', 'downloadSpeed', 'errorCode', 'errorMessage'];
 
+/** Motrixで今動いているダウンロード（速度つき） */
+export async function tellActive(): Promise<Aria2Status[]> {
+  return aria2<Aria2Status[]>('tellActive', [STATUS_KEYS]);
+}
+
+/** Motrix全体のダウンロード速度など */
+export async function getGlobalStat(): Promise<{ downloadSpeed: string; numActive: string; numWaiting: string }> {
+  return aria2('getGlobalStat');
+}
+
 /** 終了済み（完了・失敗・取り消し）の一覧。Motrixが履歴を消していなければここに残る */
 export async function tellStopped(limit = 1000): Promise<Aria2Status[]> {
   return aria2<Aria2Status[]>('tellStopped', [0, limit, STATUS_KEYS]);

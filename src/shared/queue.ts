@@ -79,3 +79,60 @@ export const HASHES_KEY = 'downloadedHashes';
 
 export const ACTIVE_STATES: ItemState[] = ['copying', 'copied', 'deleting'];
 export const FINISHED_STATES: ItemState[] = ['done', 'skipped'];
+
+/** 画面で使う大まかな区分 */
+export type QueueGroup = 'active' | 'waiting' | 'done' | 'skipped' | 'error';
+
+export const GROUP_OF: Record<ItemState, QueueGroup> = {
+  pending: 'waiting',
+  retry: 'waiting',
+  copying: 'active',
+  copied: 'active',
+  deleting: 'active',
+  downloading: 'active',
+  done: 'done',
+  skipped: 'skipped',
+  error: 'error',
+};
+
+export const GROUP_LABELS: Record<QueueGroup, string> = {
+  active: '処理中',
+  waiting: '待ち',
+  done: '完了',
+  skipped: '省略',
+  error: '失敗',
+};
+
+export interface QueueSummary {
+  total: number;
+  counts: Record<QueueGroup, number>;
+  /** 省略を除いた全体のバイト数 */
+  bytesTotal: number;
+  /** 落とし終わった分（ダウンロード中の途中まで含む） */
+  bytesDone: number;
+  /** これから落とす分（処理中・待ちの残り。失敗は含まない） */
+  bytesRemaining: number;
+}
+
+/** キューを数え上げる。live にはMotrixから取った今の進み具合（gid → 取得済みバイト）を渡せる */
+export function summarizeQueue(items: QueueItem[], live?: Map<string, number>): QueueSummary {
+  const counts: Record<QueueGroup, number> = { active: 0, waiting: 0, done: 0, skipped: 0, error: 0 };
+  let bytesTotal = 0;
+  let bytesDone = 0;
+  let bytesRemaining = 0;
+  for (const item of items) {
+    const group = GROUP_OF[item.state];
+    counts[group]++;
+    if (group === 'skipped') continue;
+    const size = item.size ?? item.totalLength ?? 0;
+    bytesTotal += size;
+    let done = 0;
+    if (item.state === 'done') done = size;
+    else if (item.state === 'downloading') {
+      done = (item.gid ? live?.get(item.gid) : undefined) ?? item.completedLength ?? 0;
+    }
+    bytesDone += done;
+    if (group === 'active' || group === 'waiting') bytesRemaining += Math.max(0, size - done);
+  }
+  return { total: items.length, counts, bytesTotal, bytesDone, bytesRemaining };
+}
