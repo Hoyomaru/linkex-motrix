@@ -11,6 +11,10 @@ export interface Settings {
   pauseOnTrafficLimit: boolean;
   /** 同時ダウンロード数 */
   maxDownloads: number;
+  /** すべて終わったとき・止まったときにWindowsの通知を出す */
+  notifications: boolean;
+  /** 右クリックやページ内のリンク収集で追加したら、すぐ開始する */
+  autoStartOnAdd: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -20,6 +24,8 @@ export const DEFAULT_SETTINGS: Settings = {
   apiIntervalMs: 300,
   pauseOnTrafficLimit: true,
   maxDownloads: 3,
+  notifications: true,
+  autoStartOnAdd: true,
 };
 
 const KEY = 'settings';

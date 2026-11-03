@@ -13,6 +13,16 @@ const TAB_KEY = 'linkexTabId';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const isDrive = (url: string | undefined) => !!url?.startsWith('https://www.linkex.io/drive/');
+const isLinkex = (url: string | undefined) => !!url && /^https:\/\/(www\.)?linkex\.io\//.test(url);
+
+/** Linkexのログインが切れている。件ごとの失敗ではなく、全体を止める理由になる */
+export class LinkexLoginError extends Error {
+  constructor() {
+    super('Linkexのログインが切れています。固定タブでログインし直してから「開始」を押してください');
+  }
+}
+
 async function waitForComplete(tabId: number, timeoutMs = 30_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -34,7 +44,7 @@ export async function ensureLinkexTab(): Promise<number> {
   // 前回使ったタブがそのまま使えるなら、確認を最小限にして返す
   if (cachedTabId !== null) {
     const tab = await chrome.tabs.get(cachedTabId).catch(() => undefined);
-    if (tab?.id !== undefined && tab.url?.startsWith('https://www.linkex.io/drive/') && tab.status === 'complete') {
+    if (tab?.id !== undefined && isDrive(tab.url) && tab.status === 'complete') {
       return tab.id;
     }
     cachedTabId = null;
@@ -44,7 +54,15 @@ export async function ensureLinkexTab(): Promise<number> {
 
   if (saved !== undefined) {
     tab = await chrome.tabs.get(saved).catch(() => undefined);
-    if (tab && !tab.url?.startsWith('https://www.linkex.io/drive/')) tab = undefined;
+    // 自分の固定タブがLinkexの別のページ（ログイン画面など）にいる場合は、
+    // 新しいタブを増やさず、ドライブに戻してみる
+    if (tab?.id !== undefined && !isDrive(tab.url)) {
+      if (isLinkex(tab.url) || isLinkex(tab.pendingUrl)) {
+        tab = await chrome.tabs.update(tab.id, { url: DRIVE_URL });
+      } else {
+        tab = undefined;
+      }
+    }
   }
   if (!tab) {
     const found = await chrome.tabs.query({ url: DRIVE_PATTERN });
@@ -58,6 +76,9 @@ export async function ensureLinkexTab(): Promise<number> {
   await chrome.tabs.update(tab.id, { autoDiscardable: false });
   await chrome.storage.session.set({ [TAB_KEY]: tab.id });
   await waitForComplete(tab.id);
+  // ドライブを開いたのにログイン画面などへ移された場合は、ログインが切れている
+  const loaded = await chrome.tabs.get(tab.id);
+  if (!isDrive(loaded.url)) throw new LinkexLoginError();
   cachedTabId = tab.id;
   return tab.id;
 }

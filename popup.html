@@ -25,6 +25,14 @@
       .actions button { flex: 1; }
       .error-line { margin-top: 8px; }
       .error-line a { color: var(--danger); }
+      .collected { margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--panel); }
+      #collect-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 200px; overflow: auto; }
+      #collect-list li { border-top: 1px solid var(--border); }
+      #collect-list label { display: flex; gap: 6px; align-items: flex-start; padding: 5px 0; cursor: pointer; font-size: 12px; }
+      #collect-list .text { flex: 1; min-width: 0; word-break: break-all; }
+      #collect-list .sub { color: var(--muted); font-size: 11px; }
+      #collect-list li.queued { opacity: .6; }
+      #collect-list li.queued label { cursor: default; }
     </style>
   </head>
   <body>
@@ -52,7 +60,19 @@
       <textarea id="input" rows="2" placeholder="共有URLを貼り付け（複数なら1行に1つ）"></textarea>
       <div class="row" style="margin-top: 6px">
         <button id="add">キューに追加</button>
-        <label class="check small"><input type="checkbox" id="autostart" checked /> 追加したら開始</label>
+        <button id="collect" title="今開いているページの中から、Linkexの共有リンクを全部拾います">このページのリンクを集める</button>
+      </div>
+      <label class="check small" style="margin-top: 6px"><input type="checkbox" id="autostart" checked /> 追加したら開始</label>
+      <div id="collected" class="collected" hidden>
+        <div class="spread small">
+          <label class="check"><input type="checkbox" id="collect-all" checked /> すべて選択</label>
+          <span id="collect-count" class="muted"></span>
+        </div>
+        <ul id="collect-list"></ul>
+        <div class="row">
+          <button id="collect-add" class="primary">選んだリンクを追加</button>
+          <button id="collect-cancel">やめる</button>
+        </div>
       </div>
       <div id="result" class="result"></div>
     </section>

@@ -1,4 +1,4 @@
-import { callLinkex } from './linkex-tab';
+import { callLinkex, LinkexLoginError } from './linkex-tab';
 
 /** 容量不足のエラーコード（Web版のコードより） */
 export const DISK_SPACE_FULL = 413300;
@@ -16,6 +16,8 @@ async function call<T>(method: 'get' | 'post', path: string, payload?: unknown):
     ...(method === 'get' ? { params: payload } : { data: payload }),
   });
   if (!res.ok) {
+    // 401、またはログイン情報が消えている状態での失敗は、ログイン切れとして全体を止める
+    if (res.status === 401 || res.loggedIn === false) throw new LinkexLoginError();
     const detail = res.detail as any;
     const code = Number(detail?.code ?? NaN);
     throw new LinkexError(`${path}: ${res.error}`, Number.isFinite(code) ? code : null, detail);

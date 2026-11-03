@@ -134,6 +134,8 @@ async function loadSettingsIntoForm() {
   (form.elements.namedItem('apiIntervalMs') as HTMLInputElement).value = String(s.apiIntervalMs);
   (form.elements.namedItem('maxDownloads') as HTMLInputElement).value = String(s.maxDownloads);
   (form.elements.namedItem('pauseOnTrafficLimit') as HTMLInputElement).checked = s.pauseOnTrafficLimit;
+  (form.elements.namedItem('notifications') as HTMLInputElement).checked = s.notifications;
+  (form.elements.namedItem('autoStartOnAdd') as HTMLInputElement).checked = s.autoStartOnAdd;
 }
 form.addEventListener('submit', async (ev) => {
   ev.preventDefault();
@@ -145,6 +147,8 @@ form.addEventListener('submit', async (ev) => {
     apiIntervalMs: Math.max(0, Number(v('apiIntervalMs').value) || 0),
     maxDownloads: Math.min(16, Math.max(1, Number(v('maxDownloads').value) || 1)),
     pauseOnTrafficLimit: v('pauseOnTrafficLimit').checked,
+    notifications: v('notifications').checked,
+    autoStartOnAdd: v('autoStartOnAdd').checked,
   };
   const res = await send({ type: 'settings.set', patch });
   $('settings-saved').textContent = res.ok ? '保存しました' : `保存に失敗: ${res.error}`;

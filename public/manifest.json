@@ -39,7 +39,10 @@
     "storage",
     "tabs",
     "scripting",
-    "alarms"
+    "alarms",
+    "notifications",
+    "contextMenus",
+    "activeTab"
   ],
   "host_permissions": [
     "https://www.linkex.io/*",

@@ -6,6 +6,9 @@ import { addWalkedToQueue, enqueueShares } from './enqueue';
 import { callLinkex, ensureLinkexTab, walkShareInTab } from './linkex-tab';
 import { addDownload, getGlobalStat, getVersion, tellActive, tellStatus } from './motrix';
 import { clearEvents, mutateQueue, readEngine } from './store';
+import { watchBadge } from './badge';
+import { createMenus, setupMenuClicks } from './menus';
+import { setupNotificationClick } from './notify';
 
 chrome.runtime.onMessage.addListener((message: Request, _sender, sendResponse) => {
   handle(message)
@@ -23,6 +26,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   else await refreshDownloads().catch(() => undefined);
 });
 chrome.runtime.onStartup.addListener(resumeIfRunning);
+
+// ツールバーの残り件数・右クリックメニュー・通知のクリック
+watchBadge();
+setupMenuClicks();
+setupNotificationClick(() => openDashboard());
 chrome.runtime.onInstalled.addListener(async () => {
   // 0.1.0 で「Motrixに見つからない」とエラーにしていた件は、実際には完了していたので直す
   await mutateQueue((items) => {
@@ -32,8 +40,24 @@ chrome.runtime.onInstalled.addListener(async () => {
       }
     }
   });
+  createMenus();
   await resumeIfRunning();
 });
+
+/** 専用ページを開く。すでに開いていればそのタブを前に出す */
+async function openDashboard(tab?: string): Promise<true> {
+  const base = chrome.runtime.getURL('dashboard.html');
+  const url = tab ? `${base}#${tab}` : undefined;
+  // タブを切り替えた後は末尾に #log などが付くので、前方一致で探す
+  const existing = (await chrome.tabs.query({})).find((t) => t.url?.startsWith(base));
+  if (existing?.id !== undefined) {
+    await chrome.tabs.update(existing.id, url ? { active: true, url } : { active: true });
+    if (existing.windowId !== undefined) await chrome.windows.update(existing.windowId, { focused: true });
+  } else {
+    await chrome.tabs.create({ url: url ?? base });
+  }
+  return true;
+}
 
 async function resumeIfRunning() {
   const engine = await readEngine();
@@ -84,19 +108,8 @@ async function handle(req: Request): Promise<unknown> {
     }
     case 'queue.addFiles':
       return addWalkedToQueue([{ token: req.token, shareName: req.shareName, files: req.files }]);
-    case 'dashboard.open': {
-      const base = chrome.runtime.getURL('dashboard.html');
-      const url = req.tab ? `${base}#${req.tab}` : undefined;
-      // タブを切り替えた後は末尾に #log などが付くので、前方一致で探す
-      const existing = (await chrome.tabs.query({})).find((t) => t.url?.startsWith(base));
-      if (existing?.id !== undefined) {
-        await chrome.tabs.update(existing.id, url ? { active: true, url } : { active: true });
-        if (existing.windowId !== undefined) await chrome.windows.update(existing.windowId, { focused: true });
-      } else {
-        await chrome.tabs.create({ url: url ?? base });
-      }
-      return true;
-    }
+    case 'dashboard.open':
+      return openDashboard(req.tab);
     case 'queue.start':
       return start();
     case 'queue.pause':

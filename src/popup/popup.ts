@@ -1,6 +1,7 @@
 import { formatBytes, formatEta, formatSpeed, percent } from '../shared/format';
 import { linkexApi } from '../shared/linkex-api';
 import { send } from '../shared/messages';
+import { extractShareUrls, parseShareToken } from '../shared/share-url';
 import { ENGINE_KEY, QUEUE_KEY, STATE_LABELS, summarizeQueue, type EngineState, type QueueItem } from '../shared/queue';
 import { pollMotrix, toProgressMap, type LiveProgress } from '../ui/live';
 
@@ -25,22 +26,21 @@ $('toggle').addEventListener('click', async () => {
 });
 
 // ---------- 追加 ----------
-const addButton = $<HTMLButtonElement>('add');
-addButton.addEventListener('click', async () => {
-  const input = $<HTMLTextAreaElement>('input');
-  const result = $('result');
-  if (!input.value.trim()) {
-    input.focus();
-    return;
-  }
-  addButton.disabled = true;
-  addButton.textContent = '読み込み中…';
-  result.className = 'result muted';
-  result.textContent = '共有の中身を読み込んでいます…';
+const result = $('result');
+function showResult(text: string, kind: '' | 'ok' | 'ng' | 'muted') {
+  result.className = `result ${kind}`;
+  result.textContent = text;
+}
+
+/** URL（複数可）をキューに追加し、必要なら開始する。うまく読めなかったURLを返す */
+async function addUrls(text: string, button: HTMLButtonElement, label: string): Promise<string[]> {
+  button.disabled = true;
+  button.textContent = '読み込み中…';
+  showResult('共有の中身を読み込んでいます…', 'muted');
   try {
     const res = await send<{ added: number; alreadyQueued: number; invalid: string[]; failed: { token: string; error: string }[] }>({
       type: 'queue.add',
-      text: input.value,
+      text,
     });
     if (!res.ok) throw new Error(res.error);
     const r = res.data;
@@ -53,19 +53,144 @@ addButton.addEventListener('click', async () => {
       parts.push(started.ok ? '開始しました' : `開始できませんでした: ${started.error}`);
     }
     const problem = r.invalid.length > 0 || r.failed.length > 0;
-    result.className = `result ${problem ? 'ng' : 'ok'}`;
-    result.textContent = parts.join('・');
-    input.value = problem ? [...r.invalid, ...r.failed.map((f) => f.token)].join('\n') : '';
+    showResult(parts.join('・'), problem ? 'ng' : 'ok');
+    return [...r.invalid, ...r.failed.map((f) => f.token)];
   } catch (e) {
-    result.className = 'result ng';
-    result.textContent = (e as Error).message;
+    showResult((e as Error).message, 'ng');
+    return text.split(/\s+/).filter(Boolean);
   } finally {
-    addButton.disabled = false;
-    addButton.textContent = 'キューに追加';
+    button.disabled = false;
+    button.textContent = label;
   }
+}
+
+const addButton = $<HTMLButtonElement>('add');
+addButton.addEventListener('click', async () => {
+  const input = $<HTMLTextAreaElement>('input');
+  if (!input.value.trim()) {
+    input.focus();
+    return;
+  }
+  const left = await addUrls(input.value, addButton, 'キューに追加');
+  input.value = left.join('\n');
 });
 $('input').addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) addButton.click();
+});
+
+// ---------- このページのリンクを集める ----------
+interface FoundLink {
+  url: string;
+  text: string;
+}
+
+/** 開いているページの中で動く。リンクと本文から共有URLらしいものを拾う（外の変数は使えない） */
+function collectLinksInPage(): FoundLink[] {
+  const pattern = /(?:https?:\/\/)?(?:www\.)?(?:linkex\.io|l2e\.click)\/(?:f|d|s)\/[A-Za-z0-9_-]{4,64}/gi;
+  const found: FoundLink[] = [];
+  for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+    const href = (a as HTMLAnchorElement).href;
+    for (const m of href.match(pattern) ?? []) {
+      found.push({ url: m, text: (a.textContent ?? '').trim().slice(0, 120) });
+    }
+  }
+  for (const m of (document.body?.innerText ?? '').match(pattern) ?? []) found.push({ url: m, text: '' });
+  return found;
+}
+
+const collectBox = $('collected');
+const collectList = $('collect-list');
+const collectAll = $<HTMLInputElement>('collect-all');
+const collectAdd = $<HTMLButtonElement>('collect-add');
+
+const collectBoxes = () => Array.from(collectList.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'));
+function updateCollectCount() {
+  const usable = collectBoxes().filter((b) => !b.disabled);
+  const checked = usable.filter((b) => b.checked);
+  $('collect-count').textContent = `${checked.length} / ${usable.length}件`;
+  collectAll.checked = usable.length > 0 && checked.length === usable.length;
+  collectAdd.disabled = checked.length === 0;
+}
+
+const collectButton = $<HTMLButtonElement>('collect');
+collectButton.addEventListener('click', async () => {
+  collectButton.disabled = true;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id === undefined) throw new Error('今のタブが分かりませんでした');
+    let found: FoundLink[];
+    try {
+      const [injection] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectLinksInPage });
+      found = (injection?.result as FoundLink[] | undefined) ?? [];
+    } catch {
+      throw new Error('このページは読み取れません（ブラウザの設定画面などは対象外です）');
+    }
+
+    // 同じ共有は1つにまとめ、リンクの文字があればそれを残す
+    const byToken = new Map<string, FoundLink>();
+    for (const f of found) {
+      const [url] = extractShareUrls(f.url);
+      const token = url ? parseShareToken(url) : null;
+      if (!token) continue;
+      const prev = byToken.get(token);
+      if (!prev) byToken.set(token, { url, text: f.text });
+      else if (!prev.text && f.text) prev.text = f.text;
+    }
+    if (byToken.size === 0) {
+      collectBox.hidden = true;
+      showResult('このページにLinkexの共有リンクは見つかりませんでした', 'muted');
+      return;
+    }
+
+    const queuedTokens = new Set(items.map((i) => i.shareToken));
+    collectList.replaceChildren(
+      ...[...byToken].map(([token, link]) => {
+        const li = document.createElement('li');
+        const label = document.createElement('label');
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.value = link.url;
+        const queued = queuedTokens.has(token);
+        box.checked = !queued;
+        box.disabled = queued;
+        box.addEventListener('change', updateCollectCount);
+        const text = document.createElement('div');
+        text.className = 'text';
+        text.textContent = link.text && link.text !== link.url ? link.text : link.url;
+        const sub = document.createElement('div');
+        sub.className = 'sub';
+        sub.textContent = queued ? `${token}・キューにあり` : link.url;
+        text.append(sub);
+        label.append(box, text);
+        li.append(label);
+        if (queued) li.className = 'queued';
+        return li;
+      }),
+    );
+    collectBox.hidden = false;
+    updateCollectCount();
+    showResult(`${byToken.size}件の共有リンクが見つかりました`, 'muted');
+  } catch (e) {
+    showResult((e as Error).message, 'ng');
+  } finally {
+    collectButton.disabled = false;
+  }
+});
+
+collectAll.addEventListener('change', () => {
+  for (const b of collectBoxes()) if (!b.disabled) b.checked = collectAll.checked;
+  updateCollectCount();
+});
+$('collect-cancel').addEventListener('click', () => {
+  collectBox.hidden = true;
+  showResult('', '');
+});
+collectAdd.addEventListener('click', async () => {
+  const urls = collectBoxes().filter((b) => b.checked && !b.disabled).map((b) => b.value);
+  if (urls.length === 0) return;
+  const left = await addUrls(urls.join('\n'), collectAdd, '選んだリンクを追加');
+  if (left.length === 0) collectBox.hidden = true;
+  else $<HTMLTextAreaElement>('input').value = left.join('\n');
 });
 
 // ---------- 表示 ----------

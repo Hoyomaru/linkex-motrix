@@ -2,7 +2,9 @@ import { contentHash, formatBytes, unwrapFile } from '../shared/files';
 import type { QueueItem } from '../shared/queue';
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError } from './api';
+import { LinkexLoginError } from './linkex-tab';
 import { addDownload, tellStatus, tellStopped, type Aria2Status } from './motrix';
+import { notify } from './notify';
 import { logEvent, readEngine, readHashes, readQueue, rememberHash, updateItem, writeEngine } from './store';
 
 const MAX_ATTEMPTS = 3;
@@ -59,6 +61,13 @@ async function runLoop(): Promise<void> {
       if (downloading === 0) {
         await writeEngine({ paused: true, message: 'すべて終わりました' });
         await logEvent('info', 'キューの処理がすべて終わりました');
+        const done = items.filter((i) => i.state === 'done').length;
+        const errors = items.filter((i) => i.state === 'error').length;
+        await notify(
+          'finished',
+          errors ? `終わりました（失敗 ${errors}件）` : 'すべて終わりました',
+          `完了 ${done}件${errors ? `・失敗 ${errors}件。専用ページで再試行できます` : ''}`,
+        );
         return;
       }
       await writeEngine({ message: `ダウンロード中 ${downloading}件` });
@@ -119,14 +128,20 @@ async function processItem(item: QueueItem): Promise<void> {
       await sleep(CAPACITY_WAIT_MS);
       return;
     }
-    if (/Motrixに接続できません|Motrixのエラー: .*unauthorized/i.test(errorText(e))) {
-      // Motrix側の問題は件ごとの失敗に数えず、全体を止めて知らせる
-      await writeEngine({ paused: true, message: `一時停止: ${errorText(e)}` });
-      await logEvent('error', `一時停止: ${errorText(e)}`);
+    if (e instanceof LinkexLoginError || /Motrixに接続できません|Motrixのエラー: .*unauthorized/i.test(errorText(e))) {
+      // ログイン切れやMotrix側の問題は件ごとの失敗に数えず、全体を止めて知らせる
+      await stopWithNotice(errorText(e));
       return;
     }
     await fail(item, errorText(e));
   }
+}
+
+/** 全体を一時停止して、処理ログと通知で知らせる */
+async function stopWithNotice(reason: string): Promise<void> {
+  await writeEngine({ paused: true, message: `一時停止: ${reason}` });
+  await logEvent('error', `一時停止: ${reason}`);
+  await notify('stopped', '一時停止しました', reason);
 }
 
 async function fail(item: QueueItem, message: string): Promise<void> {

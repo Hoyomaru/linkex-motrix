@@ -17,7 +17,7 @@ export interface BridgeRequest {
 
 export type BridgeResult =
   | { ok: true; data: unknown }
-  | { ok: false; error: string; detail?: unknown };
+  | { ok: false; error: string; detail?: unknown; status?: number | null; loggedIn?: boolean | null };
 
 export interface WalkedFile {
   id: string;
@@ -190,10 +190,19 @@ export async function linkexBridgeCall(req: BridgeRequest): Promise<BridgeResult
       : await client.post(req.path, req.data, config);
     return { ok: true, data: toPlain(res) };
   } catch (e: any) {
+    let loggedIn: boolean | null = null;
+    try {
+      // Web版はログイン情報をここに置いている。失敗の理由がログイン切れかを見分けるために使う
+      loggedIn = Boolean(localStorage.getItem('linkex_credentials'));
+    } catch {
+      loggedIn = null;
+    }
     return {
       ok: false,
       error: String(e?.message ?? e),
       detail: toPlain(e?.data ?? e?.response?.data ?? null),
+      status: Number(e?.response?.status ?? e?.status) || null,
+      loggedIn,
     };
   }
 }
