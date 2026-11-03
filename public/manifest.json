@@ -3,13 +3,23 @@
   "name": "Linkex Motrix",
   "version": "0.1.0",
   "description": "Linkexの共有ファイルを自分のストレージ経由でMotrixに渡すダウンローダー",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
   "action": {
     "default_title": "Linkex Motrix",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
   },
   "content_scripts": [
     {
@@ -19,11 +29,18 @@
         "https://l2e.click/d/*",
         "https://www.l2e.click/d/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
-  "permissions": ["storage", "tabs", "scripting", "alarms"],
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting",
+    "alarms"
+  ],
   "host_permissions": [
     "https://www.linkex.io/*",
     "https://linkex.io/*",
