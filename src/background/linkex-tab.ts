@@ -83,8 +83,38 @@ export async function ensureLinkexTab(): Promise<number> {
   return tab.id;
 }
 
-/** 共有の中身をページ内で一括して読む。処理用の順番待ちには並ばない */
-export async function walkShareInTab(token: string, concurrency = 4): Promise<WalkResult> {
+/** 共有を読んでいる途中の件数。画面（共有ページのパネル）が storage を見て表示する */
+export const WALK_PROGRESS_KEY = 'walkProgress';
+export interface WalkProgress {
+  files: number;
+  bytes: number;
+  folders: number;
+  at: number;
+}
+
+/** 読み終えた共有はしばらく覚えておき、「選んで追加」→「追加」などで読み直さない */
+const WALK_CACHE_MS = 10 * 60_000;
+const walkCache = new Map<string, { at: number; promise: Promise<WalkResult> }>();
+
+/**
+ * 共有の中身をページ内で一括して読む。処理用の順番待ちには並ばない。
+ * 同じ共有を読んでいる最中に頼まれたら、その結果を待って使う。
+ */
+export function walkShareInTab(token: string, opts: { fresh?: boolean } = {}): Promise<WalkResult> {
+  const cached = walkCache.get(token);
+  if (cached && !opts.fresh && Date.now() - cached.at < WALK_CACHE_MS) return cached.promise;
+  const promise = doWalk(token).then((res) => {
+    if (!res.ok) walkCache.delete(token); // 失敗は覚えない
+    return res;
+  });
+  walkCache.set(token, { at: Date.now(), promise });
+  for (const [key, entry] of walkCache) {
+    if (Date.now() - entry.at > WALK_CACHE_MS) walkCache.delete(key);
+  }
+  return promise;
+}
+
+async function doWalk(token: string, concurrency = 6): Promise<WalkResult> {
   const tabId = await ensureLinkexTab();
   const run = async () => {
     const [injection] = await chrome.scripting.executeScript({
@@ -95,12 +125,53 @@ export async function walkShareInTab(token: string, concurrency = 4): Promise<Wa
     });
     return (injection?.result as WalkResult | undefined) ?? { ok: false as const, error: 'no_result' };
   };
-  let result = await run();
-  if (!result.ok && result.error === 'index_not_found') {
-    await sleep(1500);
-    result = await run();
+
+  // 読んでいるあいだ、ページ内の途中経過を拾って storage に書く
+  const state = { finished: false };
+  const timer = setInterval(() => void relayProgress(tabId, token, state), 700);
+  try {
+    let result = await run();
+    if (!result.ok && result.error === 'index_not_found') {
+      await sleep(1500);
+      result = await run();
+    }
+    return result;
+  } finally {
+    clearInterval(timer);
+    state.finished = true;
+    await setProgress(token, null);
   }
-  return result;
+}
+
+async function relayProgress(tabId: number, token: string, state: { finished: boolean }) {
+  try {
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: (t: string) => {
+        const p = (window as any).__linkexMotrixWalkProgress?.[t];
+        return p && !p.done ? { files: p.files, bytes: p.bytes, folders: p.folders } : null;
+      },
+      args: [token],
+    });
+    const p = injection?.result as Omit<WalkProgress, 'at'> | null | undefined;
+    // 読み終わった後に古い途中経過を書き戻さない
+    if (p && !state.finished) await setProgress(token, { ...p, at: Date.now() });
+  } catch {
+    // 途中経過は出せなくても構わない
+  }
+}
+
+let progressWrite: Promise<unknown> = Promise.resolve();
+function setProgress(token: string, value: WalkProgress | null): Promise<void> {
+  const next = progressWrite.then(async () => {
+    const all = ((await chrome.storage.local.get(WALK_PROGRESS_KEY))[WALK_PROGRESS_KEY] ?? {}) as Record<string, WalkProgress>;
+    if (value) all[token] = value;
+    else delete all[token];
+    await chrome.storage.local.set({ [WALK_PROGRESS_KEY]: all });
+  });
+  progressWrite = next.catch(() => undefined);
+  return next;
 }
 
 // API呼び出しを1本ずつ、設定した間隔を空けて流す

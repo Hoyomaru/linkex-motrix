@@ -8,6 +8,12 @@ import type { Response } from '../shared/messages';
 import { GROUP_OF, QUEUE_KEY, STATE_LABELS, summarizeQueue, type QueueItem } from '../shared/queue';
 import { parseShareToken } from '../shared/share-url';
 
+interface WalkProgress {
+  files: number;
+  bytes: number;
+  folders: number;
+}
+
 interface WalkedFile {
   id: string;
   name: string;
@@ -204,8 +210,34 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
     if (area === 'local' && changes[QUEUE_KEY]) {
       renderProgress((changes[QUEUE_KEY].newValue as QueueItem[] | undefined) ?? []);
     }
+    if (area === 'local' && changes.walkProgress && loading) {
+      const p = (changes.walkProgress.newValue as Record<string, WalkProgress> | undefined)?.[token];
+      if (p) setStatus(`共有の中身を読み込み中… ${p.files.toLocaleString()}件・${formatBytes(p.bytes)}（フォルダ ${p.folders}）`);
+    }
   };
   chrome.storage.onChanged.addListener(onStorage);
+
+  // ---------- 共有の中身を読む ----------
+  /** 読み込み中か（途中経過を表示するため） */
+  let loading = false;
+  /** 押す前（マウスを乗せたとき）に読み始めておく。結果は Service Worker が覚えていて、押したときに使われる */
+  let prefetched = false;
+  const prefetch = () => {
+    if (prefetched) return;
+    prefetched = true;
+    void send({ type: 'share.walk', token }).then((res) => {
+      if (!res.ok) prefetched = false;
+    });
+  };
+  const withLoading = async <T>(fn: () => Promise<T>): Promise<T> => {
+    loading = true;
+    setStatus('共有の中身を読み込み中…');
+    try {
+      return await fn();
+    } finally {
+      loading = false;
+    }
+  };
 
   // ---------- 選んで追加 ----------
   const boxes = () => Array.from(list.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'));
@@ -253,11 +285,12 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
   allButton.addEventListener('click', () =>
     busy(allButton, async () => {
       closePick();
-      setStatus('共有の中身を読み込み中…');
-      const res = await send<{ added: number; addedBytes: number; alreadyQueued: number; failed: { error: string }[] }>({
-        type: 'queue.add',
-        text: token,
-      });
+      const res = await withLoading(() =>
+        send<{ added: number; addedBytes: number; alreadyQueued: number; failed: { error: string }[] }>({
+          type: 'queue.add',
+          text: token,
+        }),
+      );
       if (!res.ok) throw new Error(res.error);
       if (res.data.failed.length) throw new Error(`読み込めませんでした: ${res.data.failed[0].error}`);
       await afterAdd(res.data.added, res.data.addedBytes, res.data.alreadyQueued);
@@ -265,10 +298,13 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
   );
 
   const pickButton = q<HTMLButtonElement>('[data-act="pick"]');
+  for (const b of [allButton, pickButton]) {
+    b.addEventListener('pointerenter', prefetch);
+    b.addEventListener('focus', prefetch);
+  }
   pickButton.addEventListener('click', () =>
     busy(pickButton, async () => {
-      setStatus('共有の中身を読み込み中…');
-      const res = await send<{ shareName: string; files: WalkedFile[] }>({ type: 'share.walk', token });
+      const res = await withLoading(() => send<{ shareName: string; files: WalkedFile[] }>({ type: 'share.walk', token }));
       if (!res.ok) throw new Error(res.error);
       walked = res.data;
       list.replaceChildren(
