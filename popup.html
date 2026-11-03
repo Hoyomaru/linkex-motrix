@@ -6,25 +6,33 @@
     <link rel="icon" href="/icons/icon-32.png" />
     <link rel="stylesheet" href="/src/ui/style.css" />
     <style>
-      body { width: 360px; padding: 14px; font-size: 13px; }
-      h1 { font-size: 15px; }
-      section { margin-top: 12px; }
-      .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
-      .count { font-weight: 600; font-variant-numeric: tabular-nums; }
-      .current { list-style: none; margin: 8px 0 0; padding: 0; }
-      .current li { padding: 5px 0; border-top: 1px solid var(--border); }
-      .current .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .current .meter { height: 4px; }
+      body { width: 380px; padding: 0; font-size: 13px; }
+      .head { padding: 12px 14px 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
+      .head h1 { font-size: 15px; }
+      #engine { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .wrap { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+
+      /* 進み具合 */
+      .hero { padding: 12px; }
+      .hero-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
+      .percent { font-size: 30px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -0.5px; }
+      .percent small { font-size: 15px; font-weight: 600; color: var(--muted); margin-left: 1px; }
+      .hero-side { text-align: right; font-variant-numeric: tabular-nums; }
+      .hero-side .count { font-weight: 600; }
+      .hero .meter { height: 8px; border-radius: 4px; margin-top: 10px; }
+      .hero.empty .percent { font-size: 15px; color: var(--muted); font-weight: 600; }
+
+      .current { list-style: none; margin: 10px 0 0; padding: 0; }
+      .current li { padding: 6px 0; border-top: 1px solid var(--border); }
+      .current .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+      .current .meter { height: 3px; }
       .current .live { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-      .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-      .stats .label { color: var(--muted); font-size: 11px; }
-      .stats .meter { height: 4px; }
+
       textarea { font-size: 12px; }
       .result { font-size: 12px; margin-top: 6px; }
-      .actions { display: flex; gap: 8px; margin-top: 12px; }
-      .actions button { flex: 1; }
-      .error-line { margin-top: 8px; }
-      .error-line a { color: var(--danger); }
+      .result:empty { display: none; }
+      .add-row { display: flex; gap: 6px; margin-top: 6px; }
+      .add-row button { flex: 1; }
       .collected { margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--panel); }
       #collect-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 200px; overflow: auto; }
       #collect-list li { border-top: 1px solid var(--border); }
@@ -33,67 +41,89 @@
       #collect-list .sub { color: var(--muted); font-size: 11px; }
       #collect-list li.queued { opacity: .6; }
       #collect-list li.queued label { cursor: default; }
+
+      .account { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .account .label { color: var(--muted); font-size: 11px; }
+      .account .value { font-variant-numeric: tabular-nums; font-size: 12px; }
+      .account .meter { height: 4px; }
+      .foot { display: flex; gap: 8px; }
+      .foot .primary { flex: 1.3; }
+      .foot button { flex: 1; }
     </style>
   </head>
   <body>
-    <div class="spread">
-      <h1 class="brand"><img src="/icons/icon.svg" alt="" width="18" height="18" />Linkex Motrix</h1>
-      <span id="pill" class="pill">停止中</span>
-    </div>
-    <div id="engine" class="muted small" style="margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"></div>
-
-    <section class="card">
+    <header class="head">
       <div class="spread">
-        <span id="count" class="count">キューは空です</span>
-        <span id="bytes" class="muted small"></span>
+        <h1 class="brand"><img src="/icons/icon.svg" alt="" width="20" height="20" />Linkex Motrix</h1>
+        <span id="pill" class="pill">停止中</span>
       </div>
-      <div class="meter"><div id="bar" style="width: 0"></div></div>
-      <div class="spread muted small" style="margin-top: 4px">
-        <span id="speed"></span>
-        <span id="eta"></span>
-      </div>
-      <ul id="current" class="current" hidden></ul>
-      <div id="error-line" class="error-line small" hidden><a href="#" id="error-link"></a></div>
-    </section>
+      <div id="engine" class="muted small"></div>
+    </header>
 
-    <section>
-      <textarea id="input" rows="2" placeholder="共有URLを貼り付け（複数なら1行に1つ）"></textarea>
-      <div class="row" style="margin-top: 6px">
-        <button id="add">キューに追加</button>
-        <button id="collect" title="今開いているページの中から、Linkexの共有リンクを全部拾います">このページのリンクを集める</button>
-      </div>
-      <label class="check small" style="margin-top: 6px"><input type="checkbox" id="autostart" checked /> 追加したら開始</label>
-      <div id="collected" class="collected" hidden>
-        <div class="spread small">
-          <label class="check"><input type="checkbox" id="collect-all" checked /> すべて選択</label>
-          <span id="collect-count" class="muted"></span>
+    <div class="wrap">
+      <section id="hero" class="card hero empty">
+        <div class="hero-top">
+          <div id="percent" class="percent">キューは空です</div>
+          <div class="hero-side small">
+            <div id="count" class="count"></div>
+            <div id="bytes" class="muted"></div>
+          </div>
         </div>
-        <ul id="collect-list"></ul>
-        <div class="row">
-          <button id="collect-add" class="primary">選んだリンクを追加</button>
-          <button id="collect-cancel">やめる</button>
+        <div class="meter"><div id="bar" style="width: 0"></div></div>
+        <div class="tiles" id="tiles" hidden>
+          <div class="tile"><span class="label">速度</span><span class="value" id="speed">-</span></div>
+          <div class="tile"><span class="label">残り</span><span class="value" id="left">-</span></div>
+          <div class="tile"><span class="label">残り時間</span><span class="value" id="eta">-</span></div>
         </div>
-      </div>
-      <div id="result" class="result"></div>
-    </section>
+        <div id="counts" class="counts" hidden></div>
+        <ul id="current" class="current" hidden></ul>
+      </section>
 
-    <section class="stats">
-      <div>
-        <div class="label">容量</div>
-        <div id="usage">-</div>
-        <div class="meter"><div id="usage-bar" style="width: 0"></div></div>
-      </div>
-      <div>
-        <div class="label">転送量（目安）</div>
-        <div id="traffic">-</div>
-        <div class="meter"><div id="traffic-bar" style="width: 0"></div></div>
-      </div>
-    </section>
-    <div id="motrix" class="small muted" style="margin-top: 8px"><span id="motrix-dot" class="dot"></span><span id="motrix-text">Motrix 確認中</span></div>
+      <section id="estimate" class="estimate" hidden>
+        <div class="estimate-title">見積もり</div>
+        <div id="est-headline" class="estimate-main"></div>
+        <div id="est-traffic" class="estimate-sub"></div>
+      </section>
 
-    <div class="actions">
-      <button id="toggle" class="primary">開始</button>
-      <button id="open">専用ページを開く</button>
+      <section>
+        <textarea id="input" rows="2" placeholder="共有URLを貼り付け（複数なら1行に1つ）"></textarea>
+        <div class="add-row">
+          <button id="add">キューに追加</button>
+          <button id="collect" title="今開いているページの中から、Linkexの共有リンクを全部拾います">このページのリンクを集める</button>
+        </div>
+        <label class="check small muted" style="margin-top: 6px"><input type="checkbox" id="autostart" checked /> 追加したら開始</label>
+        <div id="collected" class="collected" hidden>
+          <div class="spread small">
+            <label class="check"><input type="checkbox" id="collect-all" checked /> すべて選択</label>
+            <span id="collect-count" class="muted"></span>
+          </div>
+          <ul id="collect-list"></ul>
+          <div class="row">
+            <button id="collect-add" class="primary">選んだリンクを追加</button>
+            <button id="collect-cancel">やめる</button>
+          </div>
+        </div>
+        <div id="result" class="result"></div>
+      </section>
+
+      <section class="card account">
+        <div>
+          <div class="label">容量</div>
+          <div id="usage" class="value">-</div>
+          <div class="meter"><div id="usage-bar" style="width: 0"></div></div>
+        </div>
+        <div>
+          <div class="label">転送量（目安）</div>
+          <div id="traffic" class="value">-</div>
+          <div class="meter"><div id="traffic-bar" style="width: 0"></div></div>
+        </div>
+        <div id="motrix" class="small muted" style="grid-column: 1 / -1"><span id="motrix-dot" class="dot"></span><span id="motrix-text">Motrix 確認中</span></div>
+      </section>
+
+      <div class="foot">
+        <button id="toggle" class="primary big">開始</button>
+        <button id="open">専用ページを開く</button>
+      </div>
     </div>
     <script type="module" src="/src/popup/popup.ts"></script>
   </body>

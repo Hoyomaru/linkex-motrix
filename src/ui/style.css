@@ -12,6 +12,9 @@
   --info: #2b6cb0;
   --soft: #eef1f4;
   --accent-soft: #e3f4ec;
+  --info-soft: #e6effa;
+  --danger-soft: #fbe9e9;
+  --shadow: 0 1px 2px rgba(16, 24, 32, .05), 0 2px 8px rgba(16, 24, 32, .04);
   --mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
   color-scheme: light;
 }
@@ -31,6 +34,9 @@
     --info: #63a4e8;
     --soft: #262b31;
     --accent-soft: #1b3a2d;
+    --info-soft: #1d2b3b;
+    --danger-soft: #3a2224;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3);
     color-scheme: dark;
   }
 }
@@ -78,6 +84,7 @@ input:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 16px;
+  box-shadow: var(--shadow);
 }
 
 .muted { color: var(--muted); }
@@ -130,3 +137,39 @@ td.actions { white-space: nowrap; text-align: right; }
 td.actions button { margin-left: 4px; }
 
 .brand { display: inline-flex; align-items: center; gap: 8px; }
+
+/* ---------- カード・数字の札 ---------- */
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow); }
+
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+.tile { background: var(--soft); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; min-width: 0; }
+.tile .label { color: var(--muted); font-size: 11px; }
+.tile .value { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 件数の内訳（処理中・待ち・完了・失敗） */
+.counts { display: flex; gap: 4px 12px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.counts span { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.counts span::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.counts b { color: var(--text); font-weight: 600; }
+.counts .c-active { color: var(--info); }
+.counts .c-done { color: var(--accent); }
+.counts .c-error { color: var(--danger); }
+.counts a.c-error { text-decoration: none; cursor: pointer; }
+.counts a.c-error:hover b { text-decoration: underline; }
+
+/* 見積もり */
+.estimate { border-radius: 10px; padding: 10px 12px; background: var(--info-soft); border-left: 3px solid var(--info); }
+.estimate.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+.estimate.ok { background: var(--accent-soft); border-left-color: var(--accent); }
+.estimate-title { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .04em; }
+.estimate-main { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 1px; }
+.estimate-sub { font-size: 12px; margin-top: 2px; }
+.estimate.warn .estimate-sub { color: var(--warn); }
+.estimate.ok .estimate-sub { color: var(--accent); }
+.estimate-sub:empty { display: none; }
+
+/* 開始・一時停止の印 */
+button.big { padding: 7px 14px; font-weight: 600; }
+button[data-icon]::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 7px; vertical-align: -1px; background: currentColor; }
+button[data-icon='play']::before { clip-path: polygon(10% 0, 100% 50%, 10% 100%); }
+button[data-icon='pause']::before { clip-path: polygon(0 0, 35% 0, 35% 100%, 0 100%, 0 0, 65% 0, 100% 0, 100% 100%, 65% 100%, 65% 0); }

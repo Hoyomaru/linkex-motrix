@@ -14,6 +14,7 @@ import {
   type QueueGroup,
   type QueueItem,
 } from '../shared/queue';
+import { estimateHeadline, estimateRemaining, estimateTrafficLine, type TrafficInfo } from '../shared/estimate';
 import { pollMotrix, toProgressMap, type LiveProgress } from '../ui/live';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -37,6 +38,7 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
   let engine: EngineState | undefined;
   let events: EventEntry[] = [];
   let progress = new Map<string, LiveProgress>();
+  let traffic: TrafficInfo | null = null;
   let filter: Filter = 'all';
   let search = '';
   let eventLevel: 'all' | 'problem' = 'all';
@@ -91,6 +93,7 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     try {
       const res = await send<{
         added: number;
+        addedBytes: number;
         alreadyQueued: number;
         invalid: string[];
         failed: { token: string; error: string }[];
@@ -98,7 +101,7 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
       }>({ type: 'queue.add', text: input.value });
       if (!res.ok) throw new Error(res.error);
       const r = res.data;
-      const parts = [`${r.added}件を追加しました`];
+      const parts = [r.added ? `${r.added}件（${formatBytes(r.addedBytes)}）を追加しました` : '追加はありません'];
       if (r.alreadyQueued) parts.push(`すでにあった ${r.alreadyQueued}件`);
       if (r.invalid.length) parts.push(`読めなかったURL ${r.invalid.length}件`);
       if (r.failed.length) parts.push(`開けなかった共有 ${r.failed.length}件（${r.failed[0].error}）`);
@@ -220,6 +223,7 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     $('engine-message').title = message;
     toggle.textContent = paused ? '開始' : '一時停止';
     toggle.className = paused ? 'primary toggle' : 'toggle pause';
+    toggle.dataset.icon = paused ? 'play' : 'pause';
   }
 
   function ourSpeed(): number {
@@ -233,28 +237,38 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     for (const [gid, p] of progress) completed.set(gid, p.completed);
     const s = summarizeQueue(items, completed);
 
-    if (s.total === 0) {
+    const empty = s.total === 0;
+    $('ov-tiles').hidden = empty;
+    if (empty) {
+      $('ov-percent').textContent = '-';
       $('ov-count').textContent = 'キューは空です';
       $('ov-bytes').textContent = '';
       $('ov-bar').style.width = '0';
-      $('ov-speed').textContent = '';
-      $('ov-eta').textContent = '';
     } else {
       const target = s.total - s.counts.skipped;
       const extra = [
         s.counts.skipped ? `省略 ${s.counts.skipped}` : '',
         s.counts.error ? `失敗 ${s.counts.error}` : '',
       ].filter(Boolean);
+      const pct = percent(s.bytesDone, s.bytesTotal);
+      $('ov-percent').innerHTML = `${Math.floor(pct)}<small>%</small>`;
       $('ov-count').textContent = `${s.counts.done} / ${target}件 完了${extra.length ? `（${extra.join('・')}）` : ''}`;
       $('ov-bytes').textContent = `${formatBytes(s.bytesDone)} / ${formatBytes(s.bytesTotal)}`;
-      $('ov-bar').style.width = `${percent(s.bytesDone, s.bytesTotal)}%`;
+      $('ov-bar').style.width = `${pct}%`;
       const speed = ourSpeed();
       const downloading = items.filter((i) => i.state === 'downloading').length;
-      $('ov-speed').textContent = downloading ? `ダウンロード中 ${downloading}件・${formatSpeed(speed)}` : '';
-      $('ov-eta').textContent = s.bytesRemaining > 0
-        ? `残り ${formatBytes(s.bytesRemaining)}${speed > 0 ? `・あと約 ${formatEta(s.bytesRemaining, speed)}` : ''}`
-        : '';
+      $('ov-speed').textContent = downloading ? `${downloading}件・${formatSpeed(speed)}` : '-';
+      $('ov-left').textContent = s.bytesRemaining > 0 ? formatBytes(s.bytesRemaining) : '-';
+      $('ov-eta').textContent = s.bytesRemaining > 0 && speed > 0 ? formatEta(s.bytesRemaining, speed) : '-';
     }
+
+    const est = estimateRemaining(items, s, traffic);
+    const estBox = $('ov-estimate');
+    estBox.hidden = est.files === 0;
+    const line = estimateTrafficLine(est);
+    estBox.className = `estimate ${line.kind === 'muted' ? '' : line.kind}`;
+    $('ov-est-headline').textContent = estimateHeadline(est);
+    $('ov-est-traffic').textContent = line.text;
 
     const badge = $('tab-badge-error');
     badge.hidden = s.counts.error === 0;
@@ -450,4 +464,12 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
       }),
     );
   }
+
+  return {
+    /** 転送量が取れたら見積もりに使う */
+    setTraffic(t: TrafficInfo | null) {
+      traffic = t;
+      renderOverview();
+    },
+  };
 }

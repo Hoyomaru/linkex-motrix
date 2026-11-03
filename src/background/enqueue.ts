@@ -7,6 +7,8 @@ import { mutateQueue } from './store';
 
 export interface EnqueueResult {
   added: number;
+  /** 追加したファイルの合計バイト数（サイズ不明は0として数える） */
+  addedBytes: number;
   alreadyQueued: number;
   invalid: string[];
   failed: { token: string; error: string }[];
@@ -26,7 +28,7 @@ const SHARE_CONCURRENCY = 3;
 export async function enqueueShares(text: string): Promise<EnqueueResult> {
   const startedAt = Date.now();
   const { tokens, invalid } = parseShareTokens(text);
-  const result: EnqueueResult = { added: 0, alreadyQueued: 0, invalid, failed: [], elapsedMs: 0 };
+  const result: EnqueueResult = { added: 0, addedBytes: 0, alreadyQueued: 0, invalid, failed: [], elapsedMs: 0 };
 
   // 貼った順番どおりにキューへ並ぶよう、読み終わった順ではなく元の順で追加する
   const walked: (WalkedShare | null)[] = new Array(tokens.length).fill(null);
@@ -47,14 +49,15 @@ export async function enqueueShares(text: string): Promise<EnqueueResult> {
 
   const counts = await addWalkedToQueue(walked.filter((w): w is WalkedShare => w !== null));
   result.added = counts.added;
+  result.addedBytes = counts.addedBytes;
   result.alreadyQueued = counts.alreadyQueued;
   result.elapsedMs = Date.now() - startedAt;
   return result;
 }
 
 /** 読み終わった共有のファイル（全部または選んだ分）をキューに追加する */
-export async function addWalkedToQueue(shares: WalkedShare[]): Promise<{ added: number; alreadyQueued: number }> {
-  const counts = { added: 0, alreadyQueued: 0 };
+export async function addWalkedToQueue(shares: WalkedShare[]): Promise<{ added: number; addedBytes: number; alreadyQueued: number }> {
+  const counts = { added: 0, addedBytes: 0, alreadyQueued: 0 };
   await mutateQueue((items) => {
     const now = Date.now();
     for (const share of shares) {
@@ -86,6 +89,7 @@ export async function addWalkedToQueue(shares: WalkedShare[]): Promise<{ added: 
         };
         items.push(item);
         counts.added++;
+        counts.addedBytes += f.size ?? 0;
       }
     }
   });

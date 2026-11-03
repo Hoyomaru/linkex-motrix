@@ -45,6 +45,13 @@ main { max-width: 1100px; margin: 0 auto; padding: 16px 24px 48px; }
 
 /* ---------- キュー ---------- */
 .overview strong { font-size: 15px; font-variant-numeric: tabular-nums; }
+.ov-top { display: flex; align-items: center; gap: 16px; }
+.ov-percent { font-size: 34px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -0.5px; min-width: 2.6em; }
+.ov-percent small { font-size: 16px; color: var(--muted); font-weight: 600; margin-left: 1px; }
+.ov-text { display: flex; flex-direction: column; min-width: 0; }
+.ov-tiles .value { font-size: 15px; }
+.overview .estimate { margin-top: 12px; }
+.topbar { box-shadow: var(--shadow); }
 
 .toolbar { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: center; }
 .toolbar input[type='search'] { width: 220px; }

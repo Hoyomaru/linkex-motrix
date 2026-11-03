@@ -1,3 +1,4 @@
+import { formatBytes } from '../shared/files';
 import { loadSettings } from '../shared/settings';
 import { extractShareUrls } from '../shared/share-url';
 import { start } from './engine';
@@ -46,7 +47,7 @@ async function addFromMenu(text: string): Promise<void> {
   }
   try {
     const r = await enqueueShares(urls.join('\n'));
-    const parts = [`${r.added}件を追加しました`];
+    const parts = [`${r.added}件（${formatBytes(r.addedBytes)}）を追加しました`];
     if (r.alreadyQueued) parts.push(`すでにあった ${r.alreadyQueued}件`);
     if (r.failed.length) parts.push(`開けなかった共有 ${r.failed.length}件`);
     const { autoStartOnAdd } = await loadSettings();

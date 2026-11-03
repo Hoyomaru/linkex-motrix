@@ -1,4 +1,5 @@
 import { formatBytes, formatEta, formatSpeed, percent } from '../shared/format';
+import { estimateHeadline, estimateRemaining, estimateTrafficLine, type TrafficInfo } from '../shared/estimate';
 import { linkexApi } from '../shared/linkex-api';
 import { send } from '../shared/messages';
 import { extractShareUrls, parseShareToken } from '../shared/share-url';
@@ -10,13 +11,15 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 let items: QueueItem[] = [];
 let engine: EngineState | undefined;
 let progress = new Map<string, LiveProgress>();
+let traffic: TrafficInfo | null = null;
 
 async function openDashboard(tab?: string) {
   await send({ type: 'dashboard.open', tab });
   window.close();
 }
 $('open').addEventListener('click', () => void openDashboard());
-$('error-link').addEventListener('click', (ev) => {
+$('counts').addEventListener('click', (ev) => {
+  if (!(ev.target as HTMLElement).closest('a')) return;
   ev.preventDefault();
   void openDashboard('queue');
 });
@@ -38,13 +41,13 @@ async function addUrls(text: string, button: HTMLButtonElement, label: string): 
   button.textContent = '読み込み中…';
   showResult('共有の中身を読み込んでいます…', 'muted');
   try {
-    const res = await send<{ added: number; alreadyQueued: number; invalid: string[]; failed: { token: string; error: string }[] }>({
+    const res = await send<{ added: number; addedBytes: number; alreadyQueued: number; invalid: string[]; failed: { token: string; error: string }[] }>({
       type: 'queue.add',
       text,
     });
     if (!res.ok) throw new Error(res.error);
     const r = res.data;
-    const parts = [`${r.added}件を追加`];
+    const parts = [r.added ? `${r.added}件（${formatBytes(r.addedBytes)}）を追加` : '追加はありません'];
     if (r.alreadyQueued) parts.push(`すでにあった ${r.alreadyQueued}件`);
     if (r.invalid.length) parts.push(`読めなかったURL ${r.invalid.length}件`);
     if (r.failed.length) parts.push(`開けなかった共有 ${r.failed.length}件`);
@@ -203,26 +206,64 @@ function render() {
   $('engine').textContent = message;
   $('engine').title = message;
   $('toggle').textContent = paused ? '開始' : '一時停止';
-  $('toggle').className = paused ? 'primary' : '';
+  $('toggle').dataset.icon = paused ? 'play' : 'pause';
+  $('toggle').className = paused ? 'primary big' : 'big';
 
   const completed = new Map<string, number>();
   for (const [gid, p] of progress) completed.set(gid, p.completed);
   const s = summarizeQueue(items, completed);
-  if (s.total === 0) {
-    $('count').textContent = 'キューは空です';
+  const empty = s.total === 0;
+  const pct = percent(s.bytesDone, s.bytesTotal);
+  $('hero').classList.toggle('empty', empty);
+  $('tiles').hidden = empty;
+  $('counts').hidden = empty;
+  if (empty) {
+    $('percent').textContent = 'キューは空です';
+    $('count').textContent = '';
     $('bytes').textContent = '';
   } else {
+    $('percent').innerHTML = `${Math.floor(pct)}<small>%</small>`;
     $('count').textContent = `${s.counts.done} / ${s.total - s.counts.skipped}件 完了`;
     $('bytes').textContent = `${formatBytes(s.bytesDone)} / ${formatBytes(s.bytesTotal)}`;
   }
-  $('bar').style.width = `${percent(s.bytesDone, s.bytesTotal)}%`;
+  $('bar').style.width = `${pct}%`;
 
   let speed = 0;
   for (const item of items) if (item.gid) speed += progress.get(item.gid)?.speed ?? 0;
-  $('speed').textContent = speed > 0 ? formatSpeed(speed) : '';
-  $('eta').textContent = s.bytesRemaining > 0 && speed > 0
-    ? `残り ${formatBytes(s.bytesRemaining)}・あと約 ${formatEta(s.bytesRemaining, speed)}`
-    : '';
+  $('speed').textContent = speed > 0 ? formatSpeed(speed) : '-';
+  $('left').textContent = s.bytesRemaining > 0 ? formatBytes(s.bytesRemaining) : '-';
+  $('eta').textContent = s.bytesRemaining > 0 && speed > 0 ? formatEta(s.bytesRemaining, speed) : '-';
+
+  const chip = (cls: string, label: string, n: number, link = false) => {
+    const e = document.createElement(link ? 'a' : 'span');
+    e.className = cls;
+    if (link) {
+      (e as HTMLAnchorElement).href = '#';
+      e.title = '専用ページで確認';
+    }
+    e.append(`${label} `);
+    const b = document.createElement('b');
+    b.textContent = String(n);
+    e.append(b);
+    return e;
+  };
+  const chips = [
+    s.counts.active ? chip('c-active', '処理中', s.counts.active) : null,
+    s.counts.waiting ? chip('c-waiting', '待ち', s.counts.waiting) : null,
+    chip('c-done', '完了', s.counts.done),
+    s.counts.skipped ? chip('c-skipped', '省略', s.counts.skipped) : null,
+    s.counts.error ? chip('c-error', '失敗', s.counts.error, true) : null,
+  ].filter((c): c is HTMLElement => c !== null);
+  $('counts').replaceChildren(...chips);
+
+  // 見積もり
+  const est = estimateRemaining(items, s, traffic);
+  const estBox = $('estimate');
+  estBox.hidden = est.files === 0;
+  const line = estimateTrafficLine(est);
+  estBox.className = `estimate ${line.kind === 'muted' ? '' : line.kind}`;
+  $('est-headline').textContent = estimateHeadline(est);
+  $('est-traffic').textContent = line.text;
 
   // 今動いているファイル（最大4件）
   const active = items.filter((i) => ['copying', 'copied', 'deleting', 'downloading'].includes(i.state)).slice(0, 4);
@@ -258,9 +299,6 @@ function render() {
       return li;
     }),
   );
-
-  $('error-line').hidden = s.counts.error === 0;
-  $('error-link').textContent = `失敗 ${s.counts.error}件 — 専用ページで確認`;
 }
 
 async function load() {
@@ -294,11 +332,13 @@ function setMeter(barId: string, used: number, total: number) {
 
 (async () => {
   try {
-    const [usage, traffic] = await Promise.all([linkexApi.usage(), linkexApi.traffic()]);
+    const [usage, t] = await Promise.all([linkexApi.usage(), linkexApi.traffic()]);
+    traffic = t;
+    render();
     $('usage').textContent = `${formatBytes(usage.usedSpace)} / ${formatBytes(usage.totalSpace)}`;
     setMeter('usage-bar', usage.usedSpace, usage.totalSpace);
-    $('traffic').textContent = `${formatBytes(traffic.usedTraffic)} / ${formatBytes(traffic.totalTraffic)}`;
-    setMeter('traffic-bar', traffic.usedTraffic, traffic.totalTraffic);
+    $('traffic').textContent = `${formatBytes(t.usedTraffic)} / ${formatBytes(t.totalTraffic)}`;
+    setMeter('traffic-bar', t.usedTraffic, t.totalTraffic);
   } catch (e) {
     $('usage').textContent = '取得できません';
     $('usage').title = (e as Error).message;

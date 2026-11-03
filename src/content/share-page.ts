@@ -146,8 +146,8 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
     }
   };
 
-  const afterAdd = async (added: number, already: number) => {
-    let text = `${added}件をキューに追加しました${already ? `（すでにあった ${already}件）` : ''}`;
+  const afterAdd = async (added: number, addedBytes: number, already: number) => {
+    let text = `${added}件（${formatBytes(addedBytes)}）をキューに追加しました${already ? `（すでにあった ${already}件）` : ''}`;
     if (added === 0 && already > 0) text = `すべてキューに入っています（${already}件）`;
     if (autostart.checked && added > 0) {
       const res = await send({ type: 'queue.start' });
@@ -254,13 +254,13 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
     busy(allButton, async () => {
       closePick();
       setStatus('共有の中身を読み込み中…');
-      const res = await send<{ added: number; alreadyQueued: number; failed: { error: string }[] }>({
+      const res = await send<{ added: number; addedBytes: number; alreadyQueued: number; failed: { error: string }[] }>({
         type: 'queue.add',
         text: token,
       });
       if (!res.ok) throw new Error(res.error);
       if (res.data.failed.length) throw new Error(`読み込めませんでした: ${res.data.failed[0].error}`);
-      await afterAdd(res.data.added, res.data.alreadyQueued);
+      await afterAdd(res.data.added, res.data.addedBytes, res.data.alreadyQueued);
     }),
   );
 
@@ -304,7 +304,13 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
       pickHead.hidden = false;
       const selectable = markQueued();
       const already = walked.files.length - selectable;
-      setStatus(`${walked.files.length}件のファイルがあります${already ? `（うち ${already}件はキューにあり）` : ''}`);
+      const total = walked.files.reduce((sum, f) => sum + (f.size ?? 0), 0);
+      const unknown = walked.files.filter((f) => f.size == null).length;
+      setStatus(
+        `全部で ${walked.files.length}件・${formatBytes(total)}${unknown ? `（サイズ不明 ${unknown}件）` : ''}` +
+          `${already ? `
+うち ${already}件はキューにあり` : ''}`,
+      );
     }),
   );
 
@@ -327,7 +333,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
         .map((b) => walked!.files[Number(b.dataset.index)])
         .filter(Boolean);
       if (files.length === 0) throw new Error('ファイルが選ばれていません');
-      const res = await send<{ added: number; alreadyQueued: number }>({
+      const res = await send<{ added: number; addedBytes: number; alreadyQueued: number }>({
         type: 'queue.addFiles',
         token,
         shareName: walked.shareName,
@@ -335,7 +341,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
       });
       if (!res.ok) throw new Error(res.error);
       closePick();
-      await afterAdd(res.data.added, res.data.alreadyQueued);
+      await afterAdd(res.data.added, res.data.addedBytes, res.data.alreadyQueued);
     }),
   );
 

@@ -59,14 +59,23 @@
         </section>
 
         <section class="panel overview">
-          <div class="spread">
-            <strong id="ov-count">キューは空です</strong>
-            <span id="ov-bytes" class="muted"></span>
+          <div class="ov-top">
+            <div id="ov-percent" class="ov-percent">-</div>
+            <div class="ov-text">
+              <strong id="ov-count">キューは空です</strong>
+              <span id="ov-bytes" class="muted"></span>
+            </div>
           </div>
           <div class="meter big"><div id="ov-bar" style="width: 0"></div></div>
-          <div class="spread muted small">
-            <span id="ov-speed"></span>
-            <span id="ov-eta"></span>
+          <div class="tiles ov-tiles" id="ov-tiles" hidden>
+            <div class="tile"><span class="label">ダウンロード中</span><span class="value" id="ov-speed">-</span></div>
+            <div class="tile"><span class="label">残り</span><span class="value" id="ov-left">-</span></div>
+            <div class="tile"><span class="label">残り時間（今の速度で）</span><span class="value" id="ov-eta">-</span></div>
+          </div>
+          <div id="ov-estimate" class="estimate" hidden>
+            <div class="estimate-title">見積もり</div>
+            <div id="ov-est-headline" class="estimate-main"></div>
+            <div id="ov-est-traffic" class="estimate-sub"></div>
           </div>
         </section>
 

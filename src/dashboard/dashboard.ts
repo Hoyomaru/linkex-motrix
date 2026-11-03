@@ -13,6 +13,8 @@ function log(label: string, value?: unknown) {
   const pre = $('log');
   pre.textContent = `[${time}] ${label}${body}\n\n${pre.textContent ?? ''}`.slice(0, 200_000);
 }
+
+const queueView = setupQueueView(log);
 $('log-clear').addEventListener('click', () => ($('log').textContent = ''));
 
 /** ボタンを押している間は無効にして、例外はログに出す */
@@ -91,6 +93,7 @@ async function refreshLinkex() {
     setMeter('usage-bar', usage.usedSpace, usage.totalSpace);
     const reset = traffic.resetTime ? new Date(traffic.resetTime * 1000).toLocaleString() : '-';
     $('traffic-text').textContent = `${formatBytes(traffic.usedTraffic)} / ${formatBytes(traffic.totalTraffic)}`;
+    queueView.setTraffic(traffic);
     $('traffic-metric').title = `直近24時間の転送量（目安）。リセット ${reset}`;
     setMeter('traffic-bar', traffic.usedTraffic, traffic.totalTraffic);
   } catch (e) {
@@ -308,7 +311,6 @@ async function loadTrash() {
 action($('trash-load'), loadTrash);
 
 // ---------- 起動時 ----------
-setupQueueView(log);
 void loadSettingsIntoForm();
 const refreshQuietly = () =>
   refreshLinkex().catch((e) => log(`Linkexの状態を取得できませんでした: ${(e as Error).message}`));
