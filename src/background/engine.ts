@@ -14,6 +14,7 @@ const COPY_FIND_MS = 60_000;
 const IDLE_WAIT_MS = 3_000;
 const TRAFFIC_RECHECK_MS = 5 * 60_000;
 const CAPACITY_WAIT_MS = 30_000;
+const TRAFFIC_WAIT_MESSAGE = '転送量の上限に達したため待機中（設定で変更できます）';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const errorText = (e: unknown) => String((e as Error)?.message ?? e);
@@ -84,8 +85,12 @@ async function runLoop(): Promise<void> {
     }
 
     if (!resumable && settings.pauseOnTrafficLimit && (await trafficExhausted())) {
-      await writeEngine({ message: '転送量の上限に達したため待機中（設定で変更できます）' });
-      await logEvent('warn', '転送量の上限に達したため待機します（5分ごとに確認）');
+      // 待機中に Service Worker が止められると1分ごとの見回りでここに戻ってくるので、
+      // ログは待機に入った最初の1回だけ書く
+      if (engine.message !== TRAFFIC_WAIT_MESSAGE) {
+        await logEvent('warn', '転送量の上限に達したため待機します（5分ごとに確認）');
+      }
+      await writeEngine({ message: TRAFFIC_WAIT_MESSAGE });
       await sleep(TRAFFIC_RECHECK_MS);
       continue;
     }
