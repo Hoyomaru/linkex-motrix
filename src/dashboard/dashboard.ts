@@ -3,6 +3,7 @@ import { formatBytes, isFolder, linkexApi, unwrapFile } from '../shared/linkex-a
 import type { Settings } from '../shared/settings';
 import { parseShareToken } from '../shared/share-url';
 import { setupQueueView } from './queue-view';
+import { secondPress } from '../ui/confirm';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -15,7 +16,9 @@ function log(label: string, value?: unknown) {
 }
 
 const queueView = setupQueueView(log);
-$('log-clear').addEventListener('click', () => ($('log').textContent = ''));
+$('log-clear').addEventListener('click', (ev) => {
+  if (secondPress(ev.currentTarget as HTMLButtonElement, 'もう一度押すと消します')) $('log').textContent = '';
+});
 
 /** ボタンを押している間は無効にして、例外はログに出す */
 function action(button: HTMLButtonElement, fn: () => Promise<void>) {
@@ -31,11 +34,15 @@ function action(button: HTMLButtonElement, fn: () => Promise<void>) {
   });
 }
 
-function makeButton(text: string, onClick: () => Promise<void>, className = ''): HTMLButtonElement {
+function makeButton(
+  text: string,
+  onClick: (button: HTMLButtonElement) => Promise<void>,
+  className = '',
+): HTMLButtonElement {
   const b = document.createElement('button');
   b.textContent = text;
   if (className) b.className = className;
-  action(b, onClick);
+  action(b, () => onClick(b));
   return b;
 }
 
@@ -298,8 +305,8 @@ async function loadTrash() {
         await loadTrash();
         await loadMine();
       }),
-      makeButton('完全削除', async () => {
-        if (!confirm(`「${f.name}」を完全に削除します。取り消せません。よろしいですか？`)) return;
+      makeButton('完全削除', async (button) => {
+        if (!secondPress(button, 'もう一度押すと完全削除')) return;
         log(`完全削除: ${f.name}`, await linkexApi.deleteForever(id));
         await loadTrash();
         await refreshLinkex();

@@ -15,7 +15,8 @@ import {
   type QueueItem,
 } from '../shared/queue';
 import { estimateHeadline, estimateRemaining, estimateTrafficLine, type TrafficInfo } from '../shared/estimate';
-import { pollMotrix, toProgressMap, type LiveProgress } from '../ui/live';
+import { engineView, pollMotrix, toProgressMap, type LiveProgress } from '../ui/live';
+import { ArmedKeys, secondPress } from '../ui/confirm';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -49,24 +50,42 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
   /** ダウンロード中の行。速度などをその場で書き換えるために持っておく */
   let liveRows = new Map<string, { bar: HTMLDivElement; text: HTMLDivElement }>();
 
-  /** ボタンを押している間は無効にして、例外は画面とログに出す */
-  const run = (button: HTMLButtonElement, fn: () => Promise<void>, opts: { inSummary?: boolean } = {}) =>
+  /** 画面上部のお知らせ（失敗したときに出す。閉じるまで残す） */
+  const notice = $('notice');
+  const showNotice = (text: string) => {
+    $('notice-text').textContent = text;
+    notice.hidden = false;
+  };
+  $('notice-close').addEventListener('click', () => (notice.hidden = true));
+
+  /**
+   * ボタンを押している間は無効にして、例外は画面とログに出す。
+   * confirm を渡すと2回押して確定にする（取り消せない操作・まとめて消す操作）
+   */
+  const run = (
+    button: HTMLButtonElement,
+    fn: () => Promise<void>,
+    opts: { inSummary?: boolean; confirm?: string } = {},
+  ) =>
     button.addEventListener('click', async (ev) => {
       if (opts.inSummary) {
         // 見出しの中のボタンで開閉しないようにする
         ev.preventDefault();
         ev.stopPropagation();
       }
+      if (opts.confirm && !secondPress(button, opts.confirm)) return;
       button.disabled = true;
       try {
         await fn();
       } catch (e) {
         log(`エラー: ${(e as Error).message}`);
-        alert((e as Error).message);
+        showNotice(`うまくいきませんでした: ${(e as Error).message}`);
       } finally {
         button.disabled = false;
       }
     });
+  /** 描き直すたびに作り直すボタンの「確認待ち」を覚えておく */
+  const armedKeys = new ArmedKeys(() => scheduleRender(0));
 
   const must = async (p: Promise<{ ok: boolean; error?: string }>) => {
     const res = await p;
@@ -139,10 +158,10 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     scheduleRender(0);
   });
   run($('retry-failed'), () => must(send({ type: 'queue.retryFailed' })));
-  run($('queue-clear'), () => must(send({ type: 'queue.clearFinished' })));
+  run($('queue-clear'), () => must(send({ type: 'queue.clearFinished' })), { confirm: 'もう一度押すと外します' });
 
   // ---------- 処理ログ ----------
-  run($('events-clear'), () => must(send({ type: 'events.clear' })));
+  run($('events-clear'), () => must(send({ type: 'events.clear' })), { confirm: 'もう一度押すと消します' });
   for (const chip of document.querySelectorAll<HTMLButtonElement>('#event-filters .chip')) {
     chip.addEventListener('click', () => {
       eventLevel = chip.dataset.level as 'all' | 'problem';
@@ -214,16 +233,14 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
 
   function renderEngine() {
     const pill = $('engine-pill');
-    const paused = engine?.paused ?? true;
-    const message = engine?.message ?? '';
-    const waiting = !paused && /待機|待ち|空き/.test(message);
-    pill.textContent = paused ? '停止中' : waiting ? '待機中' : '実行中';
-    pill.className = `pill ${paused ? '' : waiting ? 'waiting' : 'running'}`;
-    $('engine-message').textContent = message;
-    $('engine-message').title = message;
-    toggle.textContent = paused ? '開始' : '一時停止';
-    toggle.className = paused ? 'primary toggle' : 'toggle pause';
-    toggle.dataset.icon = paused ? 'play' : 'pause';
+    const view = engineView(engine, items);
+    pill.textContent = view.pill;
+    pill.className = `pill ${view.tone}`;
+    $('engine-message').textContent = view.message;
+    $('engine-message').title = view.message;
+    toggle.textContent = view.paused ? '開始' : '一時停止';
+    toggle.className = view.paused ? 'primary toggle' : 'toggle pause';
+    toggle.dataset.icon = view.paused ? 'play' : 'pause';
   }
 
   function ourSpeed(): number {
@@ -353,17 +370,23 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
 
     const actions = el('div', 'group-actions');
     if (s.counts.error) {
-      const b = el('button', '', `失敗 ${s.counts.error}件を再試行`);
+      const b = el('button', 'small', `失敗 ${s.counts.error}件を再試行`);
       run(b, () => must(send({ type: 'queue.retryFailed', token })), { inSummary: true });
       actions.append(b);
     }
     const waitingIds = all.filter((i) => GROUP_OF[i.state] === 'waiting').map((i) => i.id);
     if (waitingIds.length) {
-      const b = el('button', '', `待ち ${waitingIds.length}件を取り消す`);
+      const key = `wait:${token}`;
+      const armed = armedKeys.armed(key);
+      const b = el(
+        'button',
+        `small${armed ? ' armed' : ''}`,
+        armed ? `もう一度押すと ${waitingIds.length}件を外します` : `待ち ${waitingIds.length}件を外す`,
+      );
       run(
         b,
         async () => {
-          if (!confirm(`「${all[0].shareName}」の待ち ${waitingIds.length}件をキューから外します。よろしいですか？`)) return;
+          if (!armedKeys.press(key)) return;
           await must(send({ type: 'queue.removeMany', ids: waitingIds }));
         },
         { inSummary: true },
@@ -420,12 +443,12 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
 
     const actions = el('div', 'actions');
     if (item.state === 'error' || item.state === 'skipped') {
-      const b = el('button', '', item.state === 'skipped' ? '落とし直す' : '再試行');
+      const b = el('button', 'small', item.state === 'skipped' ? 'もう一度ダウンロード' : '再試行');
       run(b, () => must(send({ type: 'queue.retry', id: item.id })));
       actions.append(b);
     }
     if (!ACTIVE_STATES.includes(item.state)) {
-      const b = el('button', '', '削除');
+      const b = el('button', 'small', '外す');
       b.title = item.state === 'downloading' ? '一覧から外します（Motrixのダウンロードは続きます）' : '一覧から外します';
       run(b, () => must(send({ type: 'queue.remove', id: item.id })));
       actions.append(b);

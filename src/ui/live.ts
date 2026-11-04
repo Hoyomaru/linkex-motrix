@@ -50,3 +50,26 @@ export function toProgressMap(live: MotrixLive | null): Map<string, LiveProgress
   }
   return map;
 }
+
+/**
+ * 処理全体の状態を、画面に出す1つの言い方にまとめる（ポップアップ・専用ページ・共有ページで同じ）。
+ * 一時停止しても Motrix に渡したダウンロードは最後まで続くので、そのことを文で添える。
+ */
+export function engineView(
+  engine: { paused: boolean; message: string } | undefined,
+  items: { state: string }[],
+): { paused: boolean; pill: string; tone: '' | 'running' | 'waiting'; message: string } {
+  const paused = engine?.paused ?? true;
+  const message = engine?.message ?? '';
+  const downloading = items.filter((i) => i.state === 'downloading').length;
+  const unfinished = items.some((i) => !['done', 'skipped', 'error'].includes(i.state));
+  if (paused) {
+    if (downloading) {
+      return { paused, pill: '一時停止中', tone: '', message: `一時停止中（Motrix に渡した ${downloading}件は最後まで続きます）` };
+    }
+    // 「すべて終わりました」などの結果はそのまま見せる
+    return { paused, pill: unfinished ? '一時停止中' : '停止中', tone: '', message: message === '一時停止中' ? '' : message };
+  }
+  const waiting = /待機|待ち|空き/.test(message);
+  return { paused, pill: waiting ? '待機中' : '実行中', tone: waiting ? 'waiting' : 'running', message };
+}

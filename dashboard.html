@@ -47,10 +47,14 @@
     </header>
 
     <main>
+      <div id="notice" class="notice-bar" role="alert" hidden>
+        <span id="notice-text"></span>
+        <button id="notice-close" class="small">閉じる</button>
+      </div>
       <!-- ========== キュー ========== -->
       <div data-page="queue" class="page">
         <section class="panel">
-          <textarea id="queue-input" rows="2" placeholder="共有URLを貼り付け（複数なら1行に1つ）　https://www.linkex.io/f/xxxx ・ https://l2e.click/d/xxxx"></textarea>
+          <textarea id="queue-input" aria-label="共有URL" rows="2" placeholder="共有URLを貼り付け（複数なら1行に1つ）　https://www.linkex.io/f/xxxx ・ https://l2e.click/d/xxxx"></textarea>
           <div class="row" style="margin-top: 8px">
             <button id="queue-add" class="primary">キューに追加</button>
             <label class="check"><input type="checkbox" id="add-autostart" checked /> 追加したら開始する</label>
@@ -73,7 +77,6 @@
             <div class="tile"><span class="label">残り時間（今の速度で）</span><span class="value" id="ov-eta">-</span></div>
           </div>
           <div id="ov-estimate" class="estimate" hidden>
-            <div class="estimate-title">見積もり</div>
             <div id="ov-est-headline" class="estimate-main"></div>
             <div id="ov-est-traffic" class="estimate-sub"></div>
           </div>
@@ -83,9 +86,9 @@
           <div class="toolbar">
             <div class="chips" id="filters"></div>
             <div class="row">
-              <input type="search" id="queue-search" placeholder="ファイル名で絞り込み" />
+              <input type="search" id="queue-search" placeholder="ファイル名で絞り込み" aria-label="ファイル名で絞り込み" />
               <button id="retry-failed" hidden>失敗をすべて再試行</button>
-              <button id="queue-clear">完了・省略を消す</button>
+              <button id="queue-clear">完了・省略を一覧から外す</button>
             </div>
           </div>
           <div id="queue-groups"></div>
@@ -101,7 +104,7 @@
               <button class="chip active" data-level="all">すべて</button>
               <button class="chip" data-level="problem">警告・エラーだけ</button>
             </div>
-            <button id="events-clear">消去</button>
+            <button id="events-clear">ログを消す</button>
           </div>
           <ol id="events" class="events"></ol>
         </section>
@@ -185,7 +188,7 @@
 
         <section class="panel">
           <h2>3. ゴミ箱</h2>
-          <p class="note">「完全削除」は取り消せません。押すと確認画面が出ます。</p>
+          <p class="note">「完全削除」は取り消せません。2回押すと削除します。</p>
           <div class="row"><button id="trash-load">一覧を更新</button></div>
           <table id="trash-table" hidden>
             <thead><tr><th>名前</th><th>サイズ</th><th></th></tr></thead>
@@ -205,7 +208,7 @@
         <section class="panel">
           <div class="spread">
             <h2 style="margin: 0">ログ</h2>
-            <button id="log-clear">消去</button>
+            <button id="log-clear">ログを消す</button>
           </div>
           <pre id="log" class="mono log"></pre>
         </section>

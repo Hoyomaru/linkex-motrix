@@ -15,6 +15,7 @@ import {
   type QueueItem,
 } from '../shared/queue';
 import { parseShareToken } from '../shared/share-url';
+import { engineView } from '../ui/live';
 
 interface WalkProgress {
   phase?: 'tab';
@@ -40,26 +41,32 @@ function send<T>(message: unknown): Promise<Response<T>> {
 
 const LOGO = `<svg viewBox="0 0 128 128" aria-hidden="true"><defs><linearGradient id="lm-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2ab880"/><stop offset="1" stop-color="#168258"/></linearGradient></defs><rect width="128" height="128" rx="28" fill="url(#lm-g)"/><g fill="#fff"><rect x="54" y="20" width="20" height="46"/><polygon points="30,58 98,58 64,94"/><rect x="28" y="100" width="72" height="12" rx="6"/></g></svg>`;
 
+const ICON_MINUS = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8h9" /></svg>';
+const ICON_PLUS = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>';
+
 const STYLE = `
 :host { all: initial; }
 [hidden] { display: none !important; }
 * { box-sizing: border-box; }
 .panel {
-  --bg: #ffffff; --soft: #f1f4f6; --text: #1d2228; --muted: #65707c; --border: #e2e6ea;
-  --accent: #1f9d6b; --accent-soft: #e3f4ec; --accent-text: #ffffff; --danger: #c93c3c;
-  --info: #2b6cb0; --info-soft: #e6effa; --warn: #b7791f; --warn-bg: #fff6e0;
+  /* src/ui/style.css の共通の土台と同じ値。変えるときはそろえる */
+  --bg: #ffffff; --soft: #eef1f4; --text: #1d2228; --muted: #5d6874; --border: #dde1e6;
+  --ok: #276b2b; --ok-soft: #e4f1e5; --warn: #8f5400; --warn-soft: #fcf0da;
+  --danger: #c0392b; --danger-soft: #fbe8e6; --info: #1f63a8; --info-soft: #e5eef8;
+  --accent: #0b7a5c; --accent-hover: #096a50; --accent-strong: #0a6b51; --accent-soft: #e0f2eb; --on-accent: #ffffff;
   position: fixed; right: 16px; bottom: 16px; z-index: 2147483647;
   width: 340px; max-width: calc(100vw - 32px);
-  font: 13px/1.5 'Segoe UI', 'Yu Gothic UI', 'Meiryo', sans-serif;
+  font: 13px/1.5 'Segoe UI', 'Yu Gothic UI', 'Meiryo', system-ui, sans-serif; font-variant-numeric: tabular-nums;
   color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 14px;
   box-shadow: 0 12px 32px rgba(16,24,32,.16), 0 2px 6px rgba(16,24,32,.06); overflow: hidden;
   display: flex; flex-direction: column; max-height: calc(100vh - 32px);
 }
 @media (prefers-color-scheme: dark) {
   .panel {
-    --bg: #1e2227; --soft: #282d33; --text: #e6e9ed; --muted: #98a2ad; --border: #333a41;
-    --accent: #2fb57f; --accent-soft: #1b3a2d; --accent-text: #0d1512; --danger: #e26161;
-    --info: #63a4e8; --info-soft: #1d2b3b; --warn: #e0a640; --warn-bg: #3a3220;
+    --bg: #1e2227; --soft: #262b31; --text: #e6e9ed; --muted: #9ca6b1; --border: #333a42;
+    --ok: #74c47a; --ok-soft: #1c3320; --warn: #e8ad52; --warn-soft: #3a2d16;
+    --danger: #f0827a; --danger-soft: #3d2323; --info: #74aef0; --info-soft: #1c2c40;
+    --accent: #2fb57f; --accent-hover: #4cc794; --accent-strong: #6fd8aa; --accent-soft: #17362a; --on-accent: #0d1512;
     box-shadow: 0 12px 32px rgba(0,0,0,.5);
   }
 }
@@ -69,8 +76,8 @@ const STYLE = `
 .title { font-weight: 700; flex: 1; white-space: nowrap; }
 .pill { display: inline-flex; align-items: center; gap: 5px; padding: 1px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--soft); color: var(--muted); white-space: nowrap; }
 .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.pill.running { background: var(--accent-soft); color: var(--accent); }
-.pill.waiting { background: var(--warn-bg); color: var(--warn); }
+.pill.running { background: var(--info-soft); color: var(--info); }
+.pill.waiting { background: var(--warn-soft); color: var(--warn); }
 .body { padding: 12px; display: flex; flex-direction: column; gap: 10px; overflow: auto; min-height: 0; }
 .body > * { flex-shrink: 0; }
 
@@ -82,19 +89,25 @@ const STYLE = `
 .mini .ring { width: 16px; height: 16px; border-radius: 50%; background: conic-gradient(var(--accent) var(--p, 0%), var(--border) 0); -webkit-mask: radial-gradient(circle, transparent 4.5px, #000 5px); mask: radial-gradient(circle, transparent 4.5px, #000 5px); }
 
 button {
-  font: inherit; padding: 6px 10px; border-radius: 8px; cursor: pointer;
-  border: 1px solid var(--border); background: var(--soft); color: var(--text);
+  font: inherit; font-weight: 600; min-height: 32px; padding: 5px 12px; border-radius: 8px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
 }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: .5; cursor: default; }
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
-button.icon { padding: 0; width: 26px; height: 26px; line-height: 1; background: transparent; border-color: transparent; color: var(--muted); font-size: 15px; border-radius: 6px; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+button.primary:disabled { opacity: 1; background: var(--accent-soft); border-color: transparent; color: var(--accent-strong); }
+input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+button.icon { padding: 0; min-height: 0; width: 28px; height: 28px; background: transparent; border-color: transparent; color: var(--muted); border-radius: 6px; }
+button.icon svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 button.icon:hover:not(:disabled) { background: var(--soft); border-color: var(--border); color: var(--text); }
-button.link { border: 0; background: transparent; color: var(--muted); padding: 2px 0; }
+button.link { border: 0; background: transparent; color: var(--muted); padding: 2px 0; min-height: 28px; font-weight: 500; }
 button.link:hover:not(:disabled) { color: var(--text); text-decoration: underline; }
 button[data-icon]::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -0.5px; background: currentColor; }
 button[data-icon="play"]::before { clip-path: polygon(10% 0, 100% 50%, 10% 100%); }
-button[data-icon="pause"]::before { background: linear-gradient(90deg, currentColor 35%, transparent 35% 65%, currentColor 65%); }
+button[data-icon="pause"]::before { clip-path: polygon(0 0, 35% 0, 35% 100%, 0 100%, 0 0, 65% 0, 100% 0, 100% 100%, 65% 100%, 65% 0); }
 
 .share { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--info-soft); }
 .share .label { font-size: 11px; color: var(--muted); font-weight: 600; }
@@ -103,7 +116,7 @@ button[data-icon="pause"]::before { background: linear-gradient(90deg, currentCo
 .check { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; font-size: 12px; }
 .status { color: var(--muted); white-space: pre-wrap; font-size: 12px; }
 .status:empty { display: none; }
-.status.ok { color: var(--accent); }
+.status.ok { color: var(--ok); }
 .status.ng { color: var(--danger); }
 
 /* このリンクの進み具合 */
@@ -118,18 +131,18 @@ button[data-icon="pause"]::before { background: linear-gradient(90deg, currentCo
 .meter > div { height: 100%; background: var(--accent); transition: width .4s; }
 .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 8px; }
 .tile { background: var(--bg); border-radius: 7px; padding: 4px 7px; display: flex; flex-direction: column; min-width: 0; }
-.tile .label { color: var(--muted); font-size: 10px; }
+.tile .label { color: var(--muted); font-size: 11px; }
 .tile .value { font-weight: 600; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.counts { display: flex; gap: 2px 10px; flex-wrap: wrap; margin-top: 8px; font-size: 11px; color: var(--muted); }
+.counts { display: flex; gap: 2px 10px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); }
 .counts span { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
 .counts span::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .counts b { color: var(--text); font-weight: 600; }
 .counts .c-active { color: var(--info); }
-.counts .c-done { color: var(--accent); }
+.counts .c-done { color: var(--ok); }
 .counts .c-error { color: var(--danger); }
 
 .foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.foot button[data-act="toggle"] { padding: 4px 12px; font-size: 12px; }
+.foot button[data-act="toggle"] { min-height: 30px; padding: 3px 12px; font-size: 12px; }
 
 /* 選んで追加 */
 .pick-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
@@ -160,7 +173,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
         <span class="title">Linkex Motrix</span>
         <span class="mini" hidden><span class="ring"></span><span class="mini-text"></span></span>
         <span class="pill engine-pill">停止中</span>
-        <button class="icon" data-act="collapse" title="小さくする">－</button>
+        <button class="icon" data-act="collapse" title="小さくする" aria-label="小さくする"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8h9" /></svg></button>
       </div>
       <div class="body">
         <div class="share" hidden>
@@ -250,8 +263,9 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
     panel.classList.toggle('collapsed', collapsed);
     body.hidden = collapsed;
     mini.hidden = !collapsed || !q('.mini-text').textContent;
-    collapseButton.textContent = collapsed ? '＋' : '－';
+    collapseButton.innerHTML = collapsed ? ICON_PLUS : ICON_MINUS;
     collapseButton.title = collapsed ? 'Linkex Motrix を開く' : '小さくする';
+    collapseButton.setAttribute('aria-label', collapseButton.title);
   };
   collapseButton.addEventListener('click', () => {
     const collapsed = !isCollapsed();
@@ -272,15 +286,14 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
   let engine: EngineState | undefined;
   const toggleButton = q<HTMLButtonElement>('[data-act="toggle"]');
   const renderEngine = () => {
-    const paused = engine?.paused ?? true;
-    const waiting = !paused && /待機|待ち|空き/.test(engine?.message ?? '');
+    const view = engineView(engine, mine);
     const pill = q('.engine-pill');
-    pill.textContent = paused ? '停止中' : waiting ? '待機中' : '実行中';
-    pill.className = `pill engine-pill ${paused ? '' : waiting ? 'waiting' : 'running'}`;
-    pill.title = engine?.message ?? '';
-    toggleButton.textContent = paused ? '開始' : '一時停止';
-    toggleButton.dataset.icon = paused ? 'play' : 'pause';
-    toggleButton.className = paused ? 'primary' : '';
+    pill.textContent = view.pill;
+    pill.className = `pill engine-pill ${view.tone}`;
+    pill.title = view.message;
+    toggleButton.textContent = view.paused ? '開始' : '一時停止';
+    toggleButton.dataset.icon = view.paused ? 'play' : 'pause';
+    toggleButton.className = view.paused ? 'primary' : '';
   };
   toggleButton.addEventListener('click', () =>
     busy(toggleButton, async () => {

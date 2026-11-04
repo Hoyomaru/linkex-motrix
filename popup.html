@@ -7,10 +7,12 @@
     <link rel="stylesheet" href="/src/ui/style.css" />
     <style>
       body { width: 380px; padding: 0; font-size: 13px; }
-      .head { padding: 12px 14px 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
-      .head h1 { font-size: 15px; }
+      .head { padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
+      .head-top { display: flex; align-items: center; gap: 8px; }
+      .head h1 { font-size: var(--fs-l); flex: 1; min-width: 0; }
+      #toggle { min-height: 30px; padding: 3px 12px; font-size: var(--fs-s); }
       #engine { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .wrap { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+      .wrap { padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
 
       /* 進み具合 */
       .hero { padding: 12px; }
@@ -21,12 +23,28 @@
       .hero-side .count { font-weight: 600; }
       .hero .meter { height: 8px; border-radius: 4px; margin-top: 10px; }
       .hero.empty .percent { font-size: 15px; color: var(--muted); font-weight: 600; }
+      .hero.empty .meter { display: none; }
+      /* 速度・残り・残り時間は1行に（高さを抑える） */
+      .hero .tiles { display: flex; gap: 4px 14px; flex-wrap: wrap; margin-top: 8px; }
+      .hero .tile { background: none; padding: 0; flex-direction: row; align-items: baseline; gap: 5px; }
+      .hero .tile .value { font-size: var(--fs-s); }
 
       .current { list-style: none; margin: 10px 0 0; padding: 0; }
       .current li { padding: 6px 0; border-top: 1px solid var(--border); }
       .current .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
       .current .meter { height: 3px; }
-      .current .live { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+      .current .live { color: var(--muted); font-size: var(--fs-s); }
+      .current .more { color: var(--muted); font-size: var(--fs-s); padding-top: 6px; }
+
+      /* 追加（たたんでおく） */
+      .add { border: 1px solid var(--border); border-radius: var(--r-l); background: var(--surface); }
+      .add > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 6px 12px; min-height: 36px; cursor: pointer; border-radius: var(--r-l); font-weight: 600; }
+      .add > summary::-webkit-details-marker { display: none; }
+      .add > summary:hover { background: var(--soft); }
+      .add > summary .plus { width: 14px; height: 14px; fill: none; stroke: var(--accent-strong); stroke-width: 1.8; stroke-linecap: round; transition: transform .15s ease-out; }
+      .add[open] > summary .plus { transform: rotate(45deg); }
+      .add > summary .sub { margin-left: auto; font-weight: 400; font-size: var(--fs-s); color: var(--muted); }
+      .add-body { padding: 0 12px 12px; }
 
       textarea { font-size: 12px; }
       .result { font-size: 12px; margin-top: 6px; }
@@ -46,18 +64,18 @@
       .account .label { color: var(--muted); font-size: 11px; }
       .account .value { font-variant-numeric: tabular-nums; font-size: 12px; }
       .account .meter { height: 4px; }
-      .foot { display: flex; gap: 8px; }
-      .foot .primary { flex: 1.3; }
-      .foot button { flex: 1; }
+      .foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .foot #open { min-height: 30px; padding: 3px 12px; font-size: var(--fs-s); }
     </style>
   </head>
   <body>
     <header class="head">
-      <div class="spread">
+      <div class="head-top">
         <h1 class="brand"><img src="/icons/icon.svg" alt="" width="20" height="20" />Linkex Motrix</h1>
         <span id="pill" class="pill">停止中</span>
+        <button id="toggle" class="primary">開始</button>
       </div>
-      <div id="engine" class="muted small"></div>
+      <div id="engine" class="muted small" aria-live="polite"></div>
     </header>
 
     <div class="wrap">
@@ -69,7 +87,7 @@
             <div id="bytes" class="muted"></div>
           </div>
         </div>
-        <div class="meter"><div id="bar" style="width: 0"></div></div>
+        <div class="meter" id="bar-wrap" role="progressbar" aria-label="全体の進み具合" aria-valuemin="0" aria-valuemax="100"><div id="bar" style="width: 0"></div></div>
         <div class="tiles" id="tiles" hidden>
           <div class="tile"><span class="label">速度</span><span class="value" id="speed">-</span></div>
           <div class="tile"><span class="label">残り</span><span class="value" id="left">-</span></div>
@@ -80,18 +98,23 @@
       </section>
 
       <section id="estimate" class="estimate" hidden>
-        <div class="estimate-title">見積もり</div>
         <div id="est-headline" class="estimate-main"></div>
         <div id="est-traffic" class="estimate-sub"></div>
       </section>
 
-      <section>
-        <textarea id="input" rows="2" placeholder="共有URLを貼り付け（複数なら1行に1つ）"></textarea>
+      <details class="add" id="add-box">
+        <summary>
+          <svg class="plus" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>
+          共有を追加
+          <span class="sub">URLを貼る・このページから集める</span>
+        </summary>
+        <div class="add-body">
+        <textarea id="input" rows="2" placeholder="共有URLを貼り付け（複数なら1行に1つ）" aria-label="共有URL"></textarea>
         <div class="add-row">
           <button id="add">キューに追加</button>
-          <button id="collect" title="今開いているページの中から、Linkexの共有リンクを全部拾います">このページのリンクを集める</button>
+          <button id="collect" title="今開いているページの中から、Linkexの共有リンクを全部拾います">このページから集める</button>
         </div>
-        <label class="check small muted" style="margin-top: 6px"><input type="checkbox" id="autostart" checked /> 追加したら開始</label>
+        <label class="check small muted" style="margin-top: 8px"><input type="checkbox" id="autostart" checked /> 追加したら開始する</label>
         <div id="collected" class="collected" hidden>
           <div class="spread small">
             <label class="check"><input type="checkbox" id="collect-all" checked /> すべて選択</label>
@@ -103,8 +126,9 @@
             <button id="collect-cancel">やめる</button>
           </div>
         </div>
-        <div id="result" class="result"></div>
-      </section>
+        </div>
+      </details>
+      <div id="result" class="result" aria-live="polite"></div>
 
       <section class="card account">
         <div>
@@ -117,11 +141,10 @@
           <div id="traffic" class="value">-</div>
           <div class="meter"><div id="traffic-bar" style="width: 0"></div></div>
         </div>
-        <div id="motrix" class="small muted" style="grid-column: 1 / -1"><span id="motrix-dot" class="dot"></span><span id="motrix-text">Motrix 確認中</span></div>
       </section>
 
       <div class="foot">
-        <button id="toggle" class="primary big">開始</button>
+        <div id="motrix" class="small muted"><span id="motrix-dot" class="dot"></span><span id="motrix-text">Motrix 確認中</span></div>
         <button id="open">専用ページを開く</button>
       </div>
     </div>

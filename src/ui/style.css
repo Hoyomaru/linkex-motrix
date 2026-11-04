@@ -1,53 +1,101 @@
-:root {
-  --bg: #f6f7f9;
-  --panel: #ffffff;
-  --text: #1d2228;
-  --muted: #65707c;
-  --border: #dde1e6;
-  --accent: #1f9d6b;
-  --accent-text: #ffffff;
-  --danger: #c93c3c;
-  --warn-bg: #fff6e0;
-  --warn: #b7791f;
-  --info: #2b6cb0;
-  --soft: #eef1f4;
-  --accent-soft: #e3f4ec;
-  --info-soft: #e6effa;
-  --danger-soft: #fbe9e9;
-  --shadow: 0 1px 2px rgba(16, 24, 32, .05), 0 2px 8px rgba(16, 24, 32, .04);
-  --mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
-  color-scheme: light;
-}
+/* ==========================================================================
+   共通の土台（gofile-tab-cleaner と linkex-motrix で同じ内容）
+   変えるときは両方のリポジトリでそろえること。違うのは末尾のアクセント色だけ。
+   共有ページのパネル（src/content/share-page.ts）は Shadow DOM の中なので、同じ値を写してある。
 
+   決まりごと
+   - 状態の色: 完了 = --ok / 注意・待ち = --warn / 失敗 = --danger / 処理中 = --info / それ以外 = --muted
+     状態の色にアクセント色は使わない（アクセントはボタンとツールの印だけ）
+   - 色だけで伝えない: 状態には必ず文字（完了・失敗など）を添える
+   - 進み具合: 「○ / ○件」の順。割合・速度・残り時間は「・」でつなぐ
+   - 結果の文: 「○件を△しました」＋確認できなかった分があればその件数
+   - エラーの文: 何が起きたか ＋ 次に何をすればよいか
+   - 消す操作: 取り消せないもの・まとめて消すものは、ボタンを2回押して確定する
+   - 言葉: 一覧から除く = 外す / 記録を捨てる = 消す / もう一度 = 再試行
+   ========================================================================== */
+:root {
+  color-scheme: light;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --soft: #eef1f4;
+  --border: #dde1e6;
+  --text: #1d2228;
+  --muted: #5d6874;
+  --ok: #276b2b;
+  --ok-soft: #e4f1e5;
+  --warn: #8f5400;
+  --warn-soft: #fcf0da;
+  --danger: #c0392b;
+  --danger-soft: #fbe8e6;
+  --info: #1f63a8;
+  --info-soft: #e5eef8;
+  --r-s: 6px;
+  --r-m: 8px;
+  --r-l: 10px;
+  --fs-xs: 11px;
+  --fs-s: 12px;
+  --fs-m: 13px;
+  --fs-l: 15px;
+  --font: 'Segoe UI', 'Yu Gothic UI', 'Meiryo', system-ui, sans-serif;
+  --mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  --shadow: 0 1px 2px rgba(16, 24, 32, .05), 0 2px 8px rgba(16, 24, 32, .04);
+}
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #15181c;
-    --panel: #1e2227;
-    --text: #e6e9ed;
-    --muted: #98a2ad;
-    --border: #2f353c;
-    --accent: #2fb57f;
-    --accent-text: #0d1512;
-    --danger: #e26161;
-    --warn-bg: #3a3220;
-    --warn: #e0a640;
-    --info: #63a4e8;
-    --soft: #262b31;
-    --accent-soft: #1b3a2d;
-    --info-soft: #1d2b3b;
-    --danger-soft: #3a2224;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .3);
     color-scheme: dark;
+    --bg: #15181c;
+    --surface: #1e2227;
+    --soft: #262b31;
+    --border: #333a42;
+    --text: #e6e9ed;
+    --muted: #9ca6b1;
+    --ok: #74c47a;
+    --ok-soft: #1c3320;
+    --warn: #e8ad52;
+    --warn-soft: #3a2d16;
+    --danger: #f0827a;
+    --danger-soft: #3d2323;
+    --info: #74aef0;
+    --info-soft: #1c2c40;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3);
   }
 }
 
-* { box-sizing: border-box; }
+/* ---- このツールのアクセント（緑） ---- */
+:root {
+  --accent: #0b7a5c;
+  --accent-hover: #096a50;
+  --accent-strong: #0a6b51;
+  --accent-soft: #e0f2eb;
+  --on-accent: #ffffff;
+  /* 前の名前（このリポジトリの中だけで使う） */
+  --panel: var(--surface);
+  --warn-bg: var(--warn-soft);
+  --accent-text: var(--on-accent);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #2fb57f;
+    --accent-hover: #4cc794;
+    --accent-strong: #6fd8aa;
+    --accent-soft: #17362a;
+    --on-accent: #0d1512;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+::selection { background: var(--accent-soft); color: var(--text); }
+::placeholder { color: var(--muted); opacity: 1; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.5 'Segoe UI', 'Yu Gothic UI', 'Meiryo', sans-serif;
+  font: 14px/1.5 var(--font);
+  font-variant-numeric: tabular-nums;
 }
 
 h1 { font-size: 20px; margin: 0; }
@@ -55,29 +103,39 @@ h2 { font-size: 15px; margin: 0 0 12px; }
 
 button {
   font: inherit;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
   padding: 5px 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--panel);
+  border-radius: var(--r-m);
+  background: var(--surface);
   color: var(--text);
   cursor: pointer;
 }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: 0.5; cursor: default; }
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+button.primary:disabled { opacity: 1; background: var(--accent-soft); border-color: transparent; color: var(--accent-strong); }
 button.danger { color: var(--danger); border-color: var(--danger); }
+button.armed, button.armed:hover:not(:disabled) { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+button.small { min-height: 28px; padding: 3px 10px; font-size: var(--fs-s); }
+input[type='checkbox'] { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
 
 input[type='text'], input[type='password'], input[type='number'], input[type='search'], textarea {
   font: inherit;
   width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-s);
   background: var(--bg);
   color: var(--text);
 }
 textarea { resize: vertical; }
-input:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .panel {
   background: var(--panel);
@@ -94,9 +152,9 @@ input:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px
 .spread { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .hint { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
-.ok { color: var(--accent); }
+.ok { color: var(--ok); }
 .ng { color: var(--danger); }
-.note { background: var(--warn-bg); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+.note { background: var(--warn-soft); border-radius: var(--r-s); padding: 8px 10px; font-size: 13px; }
 
 .meter { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 4px; }
 .meter > div { height: 100%; background: var(--accent); transition: width .4s; }
@@ -112,23 +170,24 @@ input:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px
   background: var(--soft); color: var(--muted); white-space: nowrap;
 }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.pill.running { background: var(--accent-soft); color: var(--accent); }
-.pill.waiting { background: var(--warn-bg); color: var(--warn); }
+.pill.running { background: var(--info-soft); color: var(--info); }
+.pill.waiting { background: var(--warn-soft); color: var(--warn); }
 
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; vertical-align: 1px; }
-.dot.ok { background: var(--accent); }
+.dot.ok { background: var(--ok); }
 .dot.ng { background: var(--danger); }
 
 .badge {
   display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px;
-  background: var(--danger); color: #fff; font-size: 11px; line-height: 18px; text-align: center; font-weight: 600;
+  background: var(--danger); color: var(--surface); font-size: 11px; line-height: 18px; text-align: center; font-weight: 600;
 }
 
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.chip { border-radius: 999px; padding: 3px 12px; font-size: 13px; }
+.chip { border-radius: 999px; min-height: 28px; padding: 3px 12px; font-size: var(--fs-s); font-weight: 500; color: var(--muted); }
+.chip:hover:not(:disabled) { color: var(--text); border-color: var(--border); }
 .chip .n { color: var(--muted); margin-left: 4px; font-variant-numeric: tabular-nums; }
-.chip.active { background: var(--text); border-color: var(--text); color: var(--panel); }
-.chip.active .n { color: inherit; opacity: 0.7; }
+.chip.active { background: var(--accent-soft); border-color: transparent; color: var(--accent-strong); font-weight: 600; }
+.chip.active .n { color: inherit; }
 
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
@@ -139,33 +198,33 @@ td.actions button { margin-left: 4px; }
 .brand { display: inline-flex; align-items: center; gap: 8px; }
 
 /* ---------- カード・数字の札 ---------- */
-.card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-l); padding: 10px 12px; box-shadow: var(--shadow); }
 
 .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
-.tile { background: var(--soft); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; min-width: 0; }
-.tile .label { color: var(--muted); font-size: 11px; }
+.tile { background: var(--soft); border-radius: var(--r-m); padding: 6px 8px; display: flex; flex-direction: column; min-width: 0; }
+.tile .label { color: var(--muted); font-size: var(--fs-xs); }
 .tile .value { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* 件数の内訳（処理中・待ち・完了・失敗） */
 .counts { display: flex; gap: 4px 12px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--muted); }
-.counts span { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
-.counts span::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.counts > * { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.counts > *::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .counts b { color: var(--text); font-weight: 600; }
 .counts .c-active { color: var(--info); }
-.counts .c-done { color: var(--accent); }
+.counts .c-done { color: var(--ok); }
 .counts .c-error { color: var(--danger); }
-.counts a.c-error { text-decoration: none; cursor: pointer; }
-.counts a.c-error:hover b { text-decoration: underline; }
+.counts a.c-error { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.counts a.c-error:hover { text-decoration-thickness: 2px; }
 
 /* 見積もり */
-.estimate { border-radius: 10px; padding: 10px 12px; background: var(--info-soft); border-left: 3px solid var(--info); }
-.estimate.warn { background: var(--warn-bg); border-left-color: var(--warn); }
-.estimate.ok { background: var(--accent-soft); border-left-color: var(--accent); }
-.estimate-title { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .04em; }
+.estimate { border-radius: var(--r-l); padding: 10px 12px; background: var(--info-soft); }
+.estimate.warn { background: var(--warn-soft); }
+.estimate.ok { background: var(--ok-soft); }
 .estimate-main { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 1px; }
 .estimate-sub { font-size: 12px; margin-top: 2px; }
 .estimate.warn .estimate-sub { color: var(--warn); }
-.estimate.ok .estimate-sub { color: var(--accent); }
+.estimate.ok .estimate-sub { color: var(--ok); }
+.estimate.ok .estimate-main { color: var(--ok); }
 .estimate-sub:empty { display: none; }
 
 /* 開始・一時停止の印 */

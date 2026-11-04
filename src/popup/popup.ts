@@ -4,7 +4,7 @@ import { linkexApi } from '../shared/linkex-api';
 import { send } from '../shared/messages';
 import { extractShareUrls, parseShareToken } from '../shared/share-url';
 import { ENGINE_KEY, QUEUE_KEY, STATE_LABELS, summarizeQueue, type EngineState, type QueueItem } from '../shared/queue';
-import { pollMotrix, toProgressMap, type LiveProgress } from '../ui/live';
+import { engineView, pollMotrix, toProgressMap, type LiveProgress } from '../ui/live';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -198,16 +198,14 @@ collectAdd.addEventListener('click', async () => {
 
 // ---------- 表示 ----------
 function render() {
-  const paused = engine?.paused ?? true;
-  const message = engine?.message ?? '';
-  const waiting = !paused && /待機|待ち|空き/.test(message);
-  $('pill').textContent = paused ? '停止中' : waiting ? '待機中' : '実行中';
-  $('pill').className = `pill ${paused ? '' : waiting ? 'waiting' : 'running'}`;
-  $('engine').textContent = message;
-  $('engine').title = message;
-  $('toggle').textContent = paused ? '開始' : '一時停止';
-  $('toggle').dataset.icon = paused ? 'play' : 'pause';
-  $('toggle').className = paused ? 'primary big' : 'big';
+  const view = engineView(engine, items);
+  $('pill').textContent = view.pill;
+  $('pill').className = `pill ${view.tone}`;
+  $('engine').textContent = view.message;
+  $('engine').title = view.message;
+  $('toggle').textContent = view.paused ? '開始' : '一時停止';
+  $('toggle').dataset.icon = view.paused ? 'play' : 'pause';
+  $('toggle').className = view.paused ? 'primary' : '';
 
   const completed = new Map<string, number>();
   for (const [gid, p] of progress) completed.set(gid, p.completed);
@@ -227,6 +225,7 @@ function render() {
     $('bytes').textContent = `${formatBytes(s.bytesDone)} / ${formatBytes(s.bytesTotal)}`;
   }
   $('bar').style.width = `${pct}%`;
+  $('bar-wrap').setAttribute('aria-valuenow', String(Math.floor(pct)));
 
   let speed = 0;
   for (const item of items) if (item.gid) speed += progress.get(item.gid)?.speed ?? 0;
@@ -265,8 +264,9 @@ function render() {
   $('est-headline').textContent = estimateHeadline(est);
   $('est-traffic').textContent = line.text;
 
-  // 今動いているファイル（最大4件）
-  const active = items.filter((i) => ['copying', 'copied', 'deleting', 'downloading'].includes(i.state)).slice(0, 4);
+  // 今動いているファイル（ポップアップの高さに収めるため最大2件。全体の件数は「処理中」に出る）
+  const allActive = items.filter((i) => ['copying', 'copied', 'deleting', 'downloading'].includes(i.state));
+  const active = allActive.slice(0, 2);
   const list = $('current');
   list.hidden = active.length === 0;
   list.replaceChildren(
@@ -305,6 +305,8 @@ async function load() {
   const stored = await chrome.storage.local.get([QUEUE_KEY, ENGINE_KEY]);
   items = (stored[QUEUE_KEY] as QueueItem[] | undefined) ?? [];
   engine = stored[ENGINE_KEY] as EngineState | undefined;
+  // キューが空なら、最初にすることは追加なので開いておく
+  if (items.length === 0) $<HTMLDetailsElement>('add-box').open = true;
   render();
 }
 chrome.storage.onChanged.addListener((changes, area) => {
