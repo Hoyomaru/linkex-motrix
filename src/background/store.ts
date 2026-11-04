@@ -63,9 +63,17 @@ export async function readEngine(): Promise<EngineState> {
   return (stored[ENGINE_KEY] as EngineState | undefined) ?? { paused: true, message: '停止中', updatedAt: Date.now() };
 }
 
-export async function writeEngine(patch: Partial<EngineState>): Promise<EngineState> {
-  const next = { ...(await readEngine()), ...patch, updatedAt: Date.now() };
-  await chrome.storage.local.set({ [ENGINE_KEY]: next });
+// 全体の状態の書き換えも1本にまとめる。
+// 読んでから書くまでの間に別の書き換え（一時停止など）が入ると、古い値で上書きして消してしまうため
+let engineLock: Promise<unknown> = Promise.resolve();
+export function writeEngine(patch: Partial<EngineState>): Promise<EngineState> {
+  const run = async () => {
+    const next = { ...(await readEngine()), ...patch, updatedAt: Date.now() };
+    await chrome.storage.local.set({ [ENGINE_KEY]: next });
+    return next;
+  };
+  const next = engineLock.then(run, run);
+  engineLock = next.catch(() => undefined);
   return next;
 }
 

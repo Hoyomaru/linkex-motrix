@@ -1,6 +1,6 @@
 {
   "name": "linkex-motrix",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "private": true,
   "type": "module",
   "description": "Linkexの共有ファイルを自分のストレージ経由でMotrixに渡すEdge拡張機能",

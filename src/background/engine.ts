@@ -25,12 +25,17 @@ let loopRunning = false;
 export function kick(): void {
   if (loopRunning) return;
   loopRunning = true;
+  let failed = false;
   runLoop()
     .catch(async (e) => {
+      failed = true;
       await writeEngine({ message: `処理が止まりました: ${errorText(e)}` });
     })
-    .finally(() => {
+    .finally(async () => {
       loopRunning = false;
+      // ループが終わる直前に「開始」が押されていたら、ここで動かし直す
+      // （失敗で止まったときは、すぐに繰り返さず1分ごとの見回りに任せる）
+      if (!failed && !(await readEngine()).paused) kick();
     });
 }
 
