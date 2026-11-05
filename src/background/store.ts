@@ -58,6 +58,22 @@ export function updateItem(id: string, patch: Partial<QueueItem>): Promise<Queue
   });
 }
 
+/** 複数の件をまとめて1回で書き換える（キュー全体の書き込みは重いため） */
+export function updateItems(
+  patches: Map<string, Partial<QueueItem>>,
+  /** 書き換える直前の状態で確かめる条件（読んでから書くまでに別の操作で変わっていたら書かない） */
+  when: (item: QueueItem) => boolean = () => true,
+): Promise<void> {
+  if (patches.size === 0) return Promise.resolve();
+  return mutateQueue((items) => {
+    const now = Date.now();
+    for (const item of items) {
+      const patch = patches.get(item.id);
+      if (patch && when(item)) Object.assign(item, patch, { updatedAt: now });
+    }
+  });
+}
+
 export async function readEngine(): Promise<EngineState> {
   const stored = await chrome.storage.local.get(ENGINE_KEY);
   return (stored[ENGINE_KEY] as EngineState | undefined) ?? { paused: true, message: '停止中', updatedAt: Date.now() };
@@ -68,7 +84,12 @@ export async function readEngine(): Promise<EngineState> {
 let engineLock: Promise<unknown> = Promise.resolve();
 export function writeEngine(patch: Partial<EngineState>): Promise<EngineState> {
   const run = async () => {
-    const next = { ...(await readEngine()), ...patch, updatedAt: Date.now() };
+    const current = await readEngine();
+    // 中身が変わらないなら書かない（空き待ちの間は毎秒同じ表示を書こうとするため。
+    // 書くたびにアイコンの件数を数え直す処理が走る）
+    const same = Object.entries(patch).every(([k, v]) => current[k as keyof EngineState] === v);
+    if (same) return current;
+    const next = { ...current, ...patch, updatedAt: Date.now() };
     await chrome.storage.local.set({ [ENGINE_KEY]: next });
     return next;
   };

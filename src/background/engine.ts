@@ -5,13 +5,14 @@ import { api, collectPages, DISK_SPACE_FULL, LinkexError } from './api';
 import { LinkexLoginError } from './linkex-tab';
 import { addDownload, tellStatus, tellStopped, type Aria2Status } from './motrix';
 import { notify } from './notify';
-import { logEvent, readEngine, readHashes, readQueue, rememberHash, updateItem, writeEngine } from './store';
+import { logEvent, readEngine, readHashes, readQueue, rememberHash, updateItem, updateItems, writeEngine } from './store';
 
 const MAX_ATTEMPTS = 3;
 const COPY_TIMEOUT_MS = 5 * 60_000;
 /** 保存が終わってから、コピーが一覧に出てくるのを待つ時間 */
 const COPY_FIND_MS = 60_000;
-const IDLE_WAIT_MS = 3_000;
+/** ダウンロードの空き待ち。Motrixへの確認はPCの中で済み軽いので、短めに見る */
+const IDLE_WAIT_MS = 1_000;
 const TRAFFIC_RECHECK_MS = 5 * 60_000;
 const CAPACITY_WAIT_MS = 30_000;
 const TRAFFIC_WAIT_MESSAGE = '転送量の上限に達したため待機中（設定で変更できます）';
@@ -135,6 +136,16 @@ async function processItem(item: QueueItem): Promise<void> {
     }
   } catch (e) {
     if (e instanceof LinkexError && e.code === DISK_SPACE_FULL) {
+      // 容量の確認は毎回はせず、足りないと言われたときだけ行う。
+      // 容量の上限そのものより大きいファイルは、待っても保存できないので失敗にする
+      if (await largerThanStorage(item)) {
+        await updateItem(item.id, {
+          state: 'error',
+          error: `ファイルが容量の上限より大きいため保存できません（${formatBytes(item.size)}）`,
+        });
+        await logEvent('error', `容量の上限より大きいため保存できません: ${item.name}`);
+        return;
+      }
       await updateItem(item.id, { state: 'pending', note: '容量の空き待ち' });
       await logEvent('warn', `容量が足りないため待機: ${item.name}`);
       await sleep(CAPACITY_WAIT_MS);
@@ -146,6 +157,17 @@ async function processItem(item: QueueItem): Promise<void> {
       return;
     }
     await fail(item, errorText(e));
+  }
+}
+
+/** ファイルが容量の上限そのものより大きいか（確認できなければ false） */
+async function largerThanStorage(item: QueueItem): Promise<boolean> {
+  if (item.size === null) return false;
+  try {
+    const usage = await api.usage();
+    return usage.totalSpace > 0 && item.size > usage.totalSpace;
+  } catch {
+    return false;
   }
 }
 
@@ -191,16 +213,6 @@ async function stepCopy(item: QueueItem): Promise<void> {
     await logEvent('info', `重複のため省略: ${item.name}`);
     return;
   }
-  const usage = await api.usage();
-  if (item.size !== null && usage.totalSpace > 0 && item.size > usage.totalSpace) {
-    await updateItem(item.id, {
-      state: 'error',
-      error: `ファイルが容量の上限より大きいため保存できません（${formatBytes(item.size)}）`,
-    });
-    await logEvent('error', `容量の上限より大きいため保存できません: ${item.name}`);
-    return;
-  }
-
   const before = await listRootIds();
   await updateItem(item.id, {
     state: 'copying',
@@ -215,7 +227,9 @@ async function stepCopy(item: QueueItem): Promise<void> {
 
   const res = await api.copyFromShare(item.shareToken, item.sourceFileId);
   const taskId = res?.taskId ?? res?.task?.id;
-  if (taskId) await waitTask(String(taskId));
+  // 応答の時点で保存が終わっていれば、完了待ちを省く
+  const doneAlready = String(res?.task?.status ?? res?.status ?? '').toLowerCase() === 'success';
+  if (taskId && !doneAlready) await waitTask(String(taskId));
   await updateItem(item.id, { copiedAt: Date.now() });
 
   const fresh = (await readQueue()).find((i) => i.id === item.id);
@@ -224,7 +238,8 @@ async function stepCopy(item: QueueItem): Promise<void> {
 
 async function waitTask(taskId: string): Promise<void> {
   const started = Date.now();
-  let delay = 1000;
+  // 小さいファイルはすぐ終わることが多いので、最初は短く待ち、だんだん間隔を広げる
+  let delay = 400;
   while (Date.now() - started < COPY_TIMEOUT_MS) {
     await sleep(delay);
     delay = Math.min(delay * 1.5, 5000);
@@ -323,9 +338,18 @@ async function stepDelete(item: QueueItem): Promise<void> {
   }
 }
 
-/** Motrixのダウンロード状況を取り込み、完了・失敗を反映する */
+/** 進み具合だけの変化は、この間隔より短くは保存しない（画面はMotrixから直接取っている） */
+const PROGRESS_SAVE_MS = 30_000;
+const progressSavedAt = new Map<string, number>();
+
+/**
+ * Motrixのダウンロード状況を取り込み、完了・失敗を反映する。
+ * キュー全体の書き込みは重く、書くたびに画面も描き直されるので、変更はまとめて1回で書く
+ */
 export async function refreshDownloads(): Promise<void> {
   const items = (await readQueue()).filter((i) => i.state === 'downloading' && i.gid);
+  const patches = new Map<string, Partial<QueueItem>>();
+  const logs: [Parameters<typeof logEvent>[0], string][] = [];
   let stopped: Aria2Status[] | null = null;
   for (const item of items) {
     let status: Aria2Status | undefined;
@@ -343,8 +367,8 @@ export async function refreshDownloads(): Promise<void> {
       if (!status) {
         // 履歴に残っていない。Motrixに渡せた時点で成功とみなす（完了確認オフの要件）
         if (item.hash) await rememberHash(item.hash, item.name);
-        await updateItem(item.id, { state: 'done', gid: undefined, note: 'Motrixの履歴になし' });
-        await logEvent('info', `完了（Motrixの履歴になし）: ${item.name}`);
+        patches.set(item.id, { state: 'done', gid: undefined, note: 'Motrixの履歴になし' });
+        logs.push(['info', `完了（Motrixの履歴になし）: ${item.name}`]);
         continue;
       }
     }
@@ -354,23 +378,36 @@ export async function refreshDownloads(): Promise<void> {
     };
     if (status.status === 'complete') {
       if (item.hash) await rememberHash(item.hash, item.name);
-      await updateItem(item.id, { ...progress, state: 'done', gid: undefined });
-      await logEvent('info', `完了: ${item.name}`);
+      patches.set(item.id, { ...progress, state: 'done', gid: undefined });
+      logs.push(['info', `完了: ${item.name}`]);
     } else if (status.status === 'error') {
       const attempts = item.attempts + 1;
-      await updateItem(item.id, {
+      const reason = status.errorMessage ?? status.errorCode ?? '不明';
+      patches.set(item.id, {
         ...progress,
         attempts,
         gid: undefined,
         state: attempts >= MAX_ATTEMPTS ? 'error' : 'retry',
-        error: `Motrixでのダウンロード失敗: ${status.errorMessage ?? status.errorCode ?? '不明'}`,
+        error: `Motrixでのダウンロード失敗: ${reason}`,
       });
-      await logEvent(attempts >= MAX_ATTEMPTS ? 'error' : 'warn', `Motrixでのダウンロード失敗: ${item.name} — ${status.errorMessage ?? status.errorCode ?? '不明'}`);
+      logs.push([attempts >= MAX_ATTEMPTS ? 'error' : 'warn', `Motrixでのダウンロード失敗: ${item.name} — ${reason}`]);
     } else if (status.status === 'removed') {
-      await updateItem(item.id, { state: 'error', gid: undefined, error: 'Motrixでダウンロードが取り消されました' });
-      await logEvent('warn', `Motrixで取り消されました: ${item.name}`);
+      patches.set(item.id, { state: 'error', gid: undefined, error: 'Motrixでダウンロードが取り消されました' });
+      logs.push(['warn', `Motrixで取り消されました: ${item.name}`]);
     } else {
-      await updateItem(item.id, progress);
+      // 進み具合だけなら、変わっていて、前に保存してから時間がたったときだけ書く
+      const changed =
+        progress.totalLength !== item.totalLength || progress.completedLength !== (item.completedLength ?? 0);
+      const due = Date.now() - (progressSavedAt.get(item.id) ?? 0) >= PROGRESS_SAVE_MS;
+      if (changed && (due || progress.totalLength !== item.totalLength)) {
+        patches.set(item.id, progress);
+        progressSavedAt.set(item.id, Date.now());
+      }
     }
   }
+  // 確認しているあいだに外されたり状態が変わったりした件は書き換えない
+  const gidOf = new Map(items.map((i) => [i.id, i.gid]));
+  await updateItems(patches, (i) => i.state === 'downloading' && i.gid === gidOf.get(i.id));
+  for (const [id, patch] of patches) if (patch.state) progressSavedAt.delete(id);
+  for (const [level, message] of logs) await logEvent(level, message);
 }
