@@ -1,8 +1,9 @@
 import { contentHash, formatBytes, unwrapFile } from '../shared/files';
 import type { QueueItem } from '../shared/queue';
+import { findOwnCopy, PREP_STATES, pickStarts } from '../shared/scheduler';
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError } from './api';
-import { LinkexLoginError } from './linkex-tab';
+import { LinkexLoginError, takeFrozenReloads } from './linkex-tab';
 import { addDownload, tellStatus, tellStopped, type Aria2Status } from './motrix';
 import { notify } from './notify';
 import { logEvent, readEngine, readHashes, readQueue, rememberHash, updateItem, updateItems, writeEngine } from './store';
@@ -20,7 +21,19 @@ const TRAFFIC_WAIT_MESSAGE = '転送量の上限に達したため待機中（�
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const errorText = (e: unknown) => String((e as Error)?.message ?? e);
 
+/** 保存中のコピーの合計の上限（Linkexの容量の空きがこれより少なければ、空きのほうに合わせる） */
+const STORAGE_CAP_BYTES = 5 * 1024 ** 3;
+/** 空き容量を調べ直す間隔 */
+const BUDGET_REFRESH_MS = 5 * 60_000;
+
 let loopRunning = false;
+/** 保存〜削除を進めている件（ID → 担当が終わるまでの Promise） */
+const workers = new Map<string, Promise<void>>();
+/** この時刻までは新しい件を始めない（容量不足と言われた後・転送量の上限） */
+let capacityWaitUntil = 0;
+let trafficWaitUntil = 0;
+/** 保存中のコピーに使ってよい容量（バイト） */
+let budget: { bytes: number; at: number } | null = null;
 
 /** キューを処理するループを起動する（すでに動いていれば何もしない） */
 export function kick(): void {
@@ -42,66 +55,131 @@ export function kick(): void {
 
 export async function start(): Promise<void> {
   await writeEngine({ paused: false, message: '開始しました' });
+  takeFrozenReloads(); // 前回までの分は数えない
+  capacityWaitUntil = 0;
+  trafficWaitUntil = 0;
+  budget = null;
   await logEvent('info', '処理を開始しました');
   kick();
 }
 
 export async function pause(): Promise<void> {
-  // 処理中の1件は区切りのよいところまで進めてから止まる
+  // 処理中の件は、それぞれ区切りのよいところまで進めてから止まる
   await writeEngine({ paused: true, message: '一時停止中' });
   await logEvent('info', '一時停止しました');
 }
 
+/**
+ * 全体の指示役。空きがあれば次の件に担当を付けて保存〜削除を並行して進め、
+ * Motrixの完了を取り込み、全部終わったら知らせる。
+ */
 async function runLoop(): Promise<void> {
   while (true) {
     const engine = await readEngine();
-    if (engine.paused) return;
+    if (engine.paused) {
+      // 動いている担当が区切りのよいところで止まるのを待つ
+      await Promise.allSettled(workers.values());
+      return;
+    }
 
     const settings = await loadSettings();
     await refreshDownloads();
     const items = await readQueue();
-
-    // 途中で止まっていた件（保存中など）を最優先で片付ける
-    const resumable = items.find((i) => i.state === 'copying' || i.state === 'copied' || i.state === 'deleting');
     const downloading = items.filter((i) => i.state === 'downloading').length;
-    const next = resumable ?? items.find((i) => i.state === 'pending' || i.state === 'retry');
+    const prep = items.filter((i) => PREP_STATES.includes(i.state));
+    const waiting = items.filter((i) => i.state === 'pending' || i.state === 'retry');
 
-    if (!next) {
-      if (downloading === 0) {
-        await writeEngine({ paused: true, message: 'すべて終わりました' });
-        await logEvent('info', 'キューの処理がすべて終わりました');
-        const done = items.filter((i) => i.state === 'done').length;
-        const errors = items.filter((i) => i.state === 'error').length;
-        await notify(
-          'finished',
-          errors ? `終わりました（失敗 ${errors}件）` : 'すべて終わりました',
-          `完了 ${done}件${errors ? `・失敗 ${errors}件。専用ページで再試行できます` : ''}`,
-        );
-        return;
-      }
-      await writeEngine({ message: `ダウンロード中 ${downloading}件` });
-      await sleep(IDLE_WAIT_MS);
-      continue;
+    if (workers.size === 0 && prep.length === 0 && waiting.length === 0 && downloading === 0) {
+      await finish(items);
+      return;
     }
 
-    if (!resumable && downloading >= settings.maxDownloads) {
-      await writeEngine({ message: `ダウンロード中 ${downloading}件（空き待ち）` });
-      await sleep(IDLE_WAIT_MS);
-      continue;
+    // 保存中のコピーに使ってよい容量。コピーを置いていないときに調べ直す（置いている間は二重に数えてしまうため）
+    if (!budget || (prep.length === 0 && Date.now() - budget.at > BUDGET_REFRESH_MS)) {
+      budget = { bytes: await storageBudget(), at: Date.now() };
     }
 
-    if (!resumable && settings.pauseOnTrafficLimit && (await trafficExhausted())) {
+    const ctx = {
+      running: new Set(workers.keys()),
+      parallel: Math.max(1, settings.parallelItems),
+      budgetBytes: budget.bytes,
+      maxDownloads: settings.maxDownloads,
+    };
+    let picks = pickStarts(items, { ...ctx, allowNew: Date.now() >= capacityWaitUntil && Date.now() >= trafficWaitUntil });
+    const startsNew = picks.some((id) => waiting.some((w) => w.id === id));
+    if (startsNew && settings.pauseOnTrafficLimit && (await trafficExhausted())) {
       // 待機中に Service Worker が止められると1分ごとの見回りでここに戻ってくるので、
       // ログは待機に入った最初の1回だけ書く
       if (engine.message !== TRAFFIC_WAIT_MESSAGE) {
         await logEvent('warn', '転送量の上限に達したため待機します（5分ごとに確認）');
       }
-      await writeEngine({ message: TRAFFIC_WAIT_MESSAGE });
-      await sleep(TRAFFIC_RECHECK_MS);
-      continue;
+      trafficWaitUntil = Date.now() + TRAFFIC_RECHECK_MS;
+      picks = pickStarts(items, { ...ctx, allowNew: false });
+    }
+    for (const id of picks) {
+      workers.set(id, runWorker(id).finally(() => workers.delete(id)));
     }
 
-    await processItem(next);
+    await writeEngine({ message: statusMessage(items, downloading, waiting.length, settings.maxDownloads) });
+    // 担当が1つ終わったら、すぐ次の件を割り当てる
+    await Promise.race([sleep(IDLE_WAIT_MS), ...workers.values()]);
+  }
+}
+
+/** 画面上部に出す今の状況 */
+function statusMessage(items: QueueItem[], downloading: number, waiting: number, maxDownloads: number): string {
+  if (Date.now() < trafficWaitUntil && workers.size === 0) return TRAFFIC_WAIT_MESSAGE;
+  const parts: string[] = [];
+  if (workers.size > 0) {
+    const first = items.find((i) => workers.has(i.id));
+    parts.push(`処理中 ${workers.size}件（${first?.name ?? ''}${workers.size > 1 ? ' ほか' : ''}）`);
+  }
+  if (downloading > 0) {
+    parts.push(`ダウンロード中 ${downloading}件${waiting > 0 && downloading >= maxDownloads ? '（空き待ち）' : ''}`);
+  }
+  if (Date.now() < capacityWaitUntil) parts.push('容量の空き待ち');
+  return parts.join('・') || '待機中';
+}
+
+async function finish(items: QueueItem[]): Promise<void> {
+  await writeEngine({ paused: true, message: 'すべて終わりました' });
+  const frozen = takeFrozenReloads();
+  await logEvent(
+    'info',
+    `キューの処理がすべて終わりました${frozen ? `（凍結されたLinkexのタブを読み込み直した回数 ${frozen}回）` : ''}`,
+  );
+  const done = items.filter((i) => i.state === 'done').length;
+  const errors = items.filter((i) => i.state === 'error').length;
+  await notify(
+    'finished',
+    errors ? `終わりました（失敗 ${errors}件）` : 'すべて終わりました',
+    `完了 ${done}件${errors ? `・失敗 ${errors}件。専用ページで再試行できます` : ''}`,
+  );
+}
+
+/** 保存中のコピーに使ってよい容量。5GBとLinkexの空き容量の小さいほう */
+async function storageBudget(): Promise<number> {
+  try {
+    const usage = await api.usage();
+    if (usage.totalSpace > 0) return Math.min(STORAGE_CAP_BYTES, Math.max(0, usage.totalSpace - usage.usedSpace));
+  } catch {
+    // 調べられなければ上限だけで進める（足りなければLinkexが容量不足と返す）
+  }
+  return STORAGE_CAP_BYTES;
+}
+
+/**
+ * 1件の担当。保存 → コピー探し → URL発行・Motrixへ → 完全削除 まで進める。
+ * 一時停止されたら区切りのよいところで止まる。失敗して待ちに戻ったら、割り当て直しを待つ
+ */
+async function runWorker(id: string): Promise<void> {
+  for (let first = true; ; first = false) {
+    if ((await readEngine()).paused) return;
+    const item = (await readQueue()).find((i) => i.id === id);
+    if (!item) return;
+    const waitingState = item.state === 'pending' || item.state === 'retry';
+    if (!PREP_STATES.includes(item.state) && !(first && waitingState)) return;
+    await processItem(item);
   }
 }
 
@@ -117,7 +195,6 @@ async function trafficExhausted(): Promise<boolean> {
 
 /** 1件を1段階進める。失敗したら再試行待ちかエラーにする */
 async function processItem(item: QueueItem): Promise<void> {
-  await writeEngine({ message: `${item.name}` });
   try {
     switch (item.state) {
       case 'pending':
@@ -146,9 +223,11 @@ async function processItem(item: QueueItem): Promise<void> {
         await logEvent('error', `容量の上限より大きいため保存できません: ${item.name}`);
         return;
       }
+      // しばらく新しい件を始めず、空き容量を調べ直してから続ける
       await updateItem(item.id, { state: 'pending', note: '容量の空き待ち' });
       await logEvent('warn', `容量が足りないため待機: ${item.name}`);
-      await sleep(CAPACITY_WAIT_MS);
+      capacityWaitUntil = Date.now() + CAPACITY_WAIT_MS;
+      budget = null;
       return;
     }
     if (e instanceof LinkexLoginError || /Motrixに接続できません|Motrixのエラー: .*unauthorized/i.test(errorText(e))) {
@@ -264,12 +343,9 @@ async function stepFindCopy(item: QueueItem): Promise<void> {
   const before = new Set(item.beforeIds ?? []);
   const now = await listRootIds();
   const fresh = [...now.entries()].filter(([id]) => !before.has(id)).map(([, f]) => f);
-  const sameName = fresh
-    .filter((f) => String(f.name) === item.name)
-    .sort((a, b) => Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0));
   const sizeOf = (f: any) => Number(f.size);
-  const exact = sameName.filter((f) => item.size === null || sizeOf(f) === item.size);
-  const found = exact[0] ?? (sameName.length === 1 ? sameName[0] : undefined);
+  // 同時に進めているほかの件のコピーとして決まったファイルは選ばない
+  const found = findOwnCopy(fresh, item, await claimedByOthers(item.id));
 
   if (!found) {
     // 保存が終わってから少し待っても出てこなければ、保存し直す（再試行するとすぐ見つかることが多い）
@@ -285,6 +361,12 @@ async function stepFindCopy(item: QueueItem): Promise<void> {
     );
   }
   await updateItem(item.id, { state: 'copied', destFileId: String(found.id) });
+}
+
+/** ほかの件のコピーとして決まっている、自分のストレージのファイルID */
+async function claimedByOthers(id: string): Promise<Set<string>> {
+  const items = await readQueue();
+  return new Set(items.filter((i) => i.id !== id && i.destFileId).map((i) => String(i.destFileId)));
 }
 
 async function stepSend(item: QueueItem): Promise<void> {
@@ -313,6 +395,11 @@ async function stepDelete(item: QueueItem): Promise<void> {
   // 安全確認: 保存前から存在したファイルは絶対に消さない
   if ((item.beforeIds ?? []).includes(destId)) {
     await updateItem(item.id, { state: 'error', error: '削除対象が保存前から存在していたため、削除を中止しました' });
+    return;
+  }
+  // 安全確認: ほかの件のコピーとして決まったファイルは消さない
+  if ((await claimedByOthers(item.id)).has(destId)) {
+    await updateItem(item.id, { state: 'error', error: '削除対象がほかの件のコピーと重なったため、削除を中止しました' });
     return;
   }
 

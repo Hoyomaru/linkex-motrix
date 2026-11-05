@@ -11,6 +11,8 @@ export interface Settings {
   pauseOnTrafficLimit: boolean;
   /** 同時ダウンロード数 */
   maxDownloads: number;
+  /** Linkex側の保存〜削除を同時に進める数（APIを同時に呼ぶ数も同じ） */
+  parallelItems: number;
   /** すべて終わったとき・止まったときにWindowsの通知を出す */
   notifications: boolean;
   /** 右クリックやページ内のリンク収集で追加したら、すぐ開始する */
@@ -24,6 +26,7 @@ export const DEFAULT_SETTINGS: Settings = {
   apiIntervalMs: 300,
   pauseOnTrafficLimit: true,
   maxDownloads: 3,
+  parallelItems: 3,
   notifications: true,
   autoStartOnAdd: true,
 };

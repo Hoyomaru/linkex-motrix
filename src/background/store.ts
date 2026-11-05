@@ -103,6 +103,11 @@ export async function readHashes(): Promise<Record<string, { name: string; at: n
   return (stored[HASHES_KEY] as Record<string, { name: string; at: number }> | undefined) ?? {};
 }
 
+/** ダウンロード済みの記録（重複の省略に使う）を全部消す */
+export async function clearHashes(): Promise<void> {
+  await chrome.storage.local.remove(HASHES_KEY);
+}
+
 export async function rememberHash(hash: string, name: string): Promise<void> {
   const hashes = await readHashes();
   hashes[hash] = { name, at: Date.now() };

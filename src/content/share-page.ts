@@ -15,6 +15,7 @@ import {
   type QueueItem,
 } from '../shared/queue';
 import { parseShareToken } from '../shared/share-url';
+import { singleTopFolder } from '../shared/files';
 import { engineView } from '../ui/live';
 
 interface WalkProgress {
@@ -554,6 +555,8 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
         token,
         shareName: walked.shareName,
         files,
+        // 選んだ分だけでなく共有全体で判定する（選び方で保存先が変わらないように）
+        collapseRoot: singleTopFolder(walked.files) !== null,
       });
       if (!res.ok) throw new Error(res.error);
       closePick();

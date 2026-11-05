@@ -15,12 +15,22 @@ const TAB_KEY = 'linkexTabId';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const isDrive = (url: string | undefined) => !!url?.startsWith('https://www.linkex.io/drive/');
+/** 記録に残すページの場所（クエリなどは付けない） */
+const pagePath = (url: string | undefined) => {
+  try {
+    const u = new URL(url ?? '');
+    return `${u.host}${u.pathname}`;
+  } catch {
+    return '不明なページ';
+  }
+};
 const isLinkex = (url: string | undefined) => !!url && /^https:\/\/(www\.)?linkex\.io\//.test(url);
 
 /** Linkexのログインが切れている。件ごとの失敗ではなく、全体を止める理由になる */
 export class LinkexLoginError extends Error {
-  constructor() {
-    super('Linkexのログインが切れています。固定タブでログインし直してから「開始」を押してください');
+  /** reason: 何が失敗してログイン切れと判断したか（後から調べられるよう、メッセージに添える） */
+  constructor(reason?: string) {
+    super(`Linkexのログインが切れています。固定タブでログインし直してから「開始」を押してください${reason ? `（${reason}）` : ''}`);
   }
 }
 
@@ -56,15 +66,27 @@ async function wakeIfAsleep(tab: chrome.tabs.Tab): Promise<boolean> {
   return true;
 }
 
-async function reloadAndWait(tabId: number): Promise<void> {
-  await chrome.tabs.reload(tabId);
-  // 読み込みが始まる前に「complete」を拾わないよう、いったん読み込み中になるのを待つ
-  for (let i = 0; i < 10; i++) {
-    const tab = await chrome.tabs.get(tabId);
-    if (tab.status !== 'complete') break;
-    await sleep(100);
-  }
-  await waitForComplete(tabId);
+/** 読み込み直している最中のタブ。同時に呼んでいる複数の件が、それぞれ読み込み直さないようにする */
+const reloading = new Map<number, Promise<void>>();
+/** タブを読み込み直すたびに増える。呼び出しの途中で読み込み直されたかを見分けるのに使う */
+let reloadEpoch = 0;
+
+function reloadAndWait(tabId: number): Promise<void> {
+  const current = reloading.get(tabId);
+  if (current) return current;
+  reloadEpoch++;
+  const run = (async () => {
+    await chrome.tabs.reload(tabId);
+    // 読み込みが始まる前に「complete」を拾わないよう、いったん読み込み中になるのを待つ
+    for (let i = 0; i < 10; i++) {
+      const tab = await chrome.tabs.get(tabId);
+      if (tab.status !== 'complete') break;
+      await sleep(100);
+    }
+    await waitForComplete(tabId);
+  })().finally(() => reloading.delete(tabId));
+  reloading.set(tabId, run);
+  return run;
 }
 
 /**
@@ -73,20 +95,29 @@ async function reloadAndWait(tabId: number): Promise<void> {
  * メモリ不足で破棄されないよう autoDiscardable を切る。
  */
 let cachedTabId: number | null = null;
+/** タブを探している・開いている最中なら、その結果を待って使う（同時に呼ばれてタブが増えないように） */
+let ensuring: Promise<number> | null = null;
 
 export async function ensureLinkexTab(): Promise<number> {
+  // ほかの件が読み込み直している最中なら、終わるのを待つ
+  if (cachedTabId !== null) await reloading.get(cachedTabId)?.catch(() => undefined);
   // 前回使ったタブがそのまま使えるなら、確認を最小限にして返す
   if (cachedTabId !== null) {
     const tab = await chrome.tabs.get(cachedTabId).catch(() => undefined);
     if (tab?.id !== undefined && isDrive(tab.url) && tab.status === 'complete') {
       if (await wakeIfAsleep(tab)) {
         const woke = await chrome.tabs.get(tab.id);
-        if (!isDrive(woke.url)) throw new LinkexLoginError();
+        if (!isDrive(woke.url)) throw new LinkexLoginError(`タブが ${pagePath(woke.url)} に移りました`);
       }
       return tab.id;
     }
     cachedTabId = null;
   }
+  ensuring ??= findOrOpenTab().finally(() => (ensuring = null));
+  return ensuring;
+}
+
+async function findOrOpenTab(): Promise<number> {
   const saved = (await chrome.storage.session.get(TAB_KEY))[TAB_KEY] as number | undefined;
   let tab: chrome.tabs.Tab | undefined;
 
@@ -116,7 +147,7 @@ export async function ensureLinkexTab(): Promise<number> {
   if (!(await wakeIfAsleep(tab))) await waitForComplete(tab.id);
   // ドライブを開いたのにログイン画面などへ移された場合は、ログインが切れている
   const loaded = await chrome.tabs.get(tab.id);
-  if (!isDrive(loaded.url)) throw new LinkexLoginError();
+  if (!isDrive(loaded.url)) throw new LinkexLoginError(`タブが ${pagePath(loaded.url)} に移りました`);
   cachedTabId = tab.id;
   return tab.id;
 }
@@ -262,58 +293,179 @@ function setProgress(token: string, value: WalkProgress | null): Promise<void> {
   return next;
 }
 
-// API呼び出しを1本ずつ、設定した間隔を空けて流す
-let chain: Promise<unknown> = Promise.resolve();
+// API呼び出しは同時に「同時に処理する数」本まで流す。始める間隔は設定どおりに空ける
+let startGate: Promise<unknown> = Promise.resolve();
 let lastCallAt = 0;
+let activeCalls = 0;
+const callWaiters: (() => void)[] = [];
 
 export function callLinkex(req: BridgeRequest): Promise<BridgeResult> {
-  const run = async (): Promise<BridgeResult> => {
-    const { apiIntervalMs } = await loadSettings();
+  // 始める順番は頼まれた順。空きができるまで、後の呼び出しも並んで待つ
+  const begin = async () => {
+    const { apiIntervalMs, parallelItems } = await loadSettings();
+    while (activeCalls >= Math.max(1, parallelItems)) await new Promise<void>((r) => callWaiters.push(r));
     const wait = lastCallAt + apiIntervalMs - Date.now();
     if (wait > 0) await sleep(wait);
     lastCallAt = Date.now();
+    activeCalls++;
+  };
+  const gate = startGate.then(begin, begin);
+  startGate = gate.catch(() => undefined);
+  return gate.then(async () => {
+    try {
+      return await run();
+    } finally {
+      activeCalls--;
+      callWaiters.shift()?.();
+    }
+  });
 
+  async function run(): Promise<BridgeResult> {
     const tabId = await ensureLinkexTab();
+    const startedAt = Date.now();
     let result = await execute(tabId, req);
     // ページの部品がまだ読み込まれていない場合は少し待って1回だけやり直す
     if (!result.ok && result.error === 'index_not_found') {
       await sleep(1500);
       result = await execute(tabId, req);
     }
+    // 遅い呼び出しは、どこで時間がかかっているかを後から調べられるよう記録する
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= SLOW_CALL_MS) {
+      void logEvent('warn', `Linkexの応答が遅い: ${req.path}・${(elapsed / 1000).toFixed(1)}秒${result.ok ? '' : `（${result.error}）`}`);
+    }
     return result;
-  };
-  const next = chain.then(run, run);
-  chain = next.catch(() => undefined);
-  return next;
+  }
 }
 
 /** API呼び出し1回の待ち時間の上限 */
 const CALL_TIMEOUT_MS = 20_000;
+/** これより時間がかかった呼び出しは処理ログに残す */
+const SLOW_CALL_MS = 3_000;
 
 /**
- * タブの中でAPIを1回呼ぶ。返事がなければ（タブが凍結しているなど）タブを読み込み直して1回だけやり直す。
+ * 応答がないときのタブの様子を調べる（原因を見分けるための記録用）。
+ * タブが命令に応じるか、頼んだ通信がページから送られて返ってきているかを見る
+ */
+async function diagnoseStall(tabId: number, req: BridgeRequest, since: number): Promise<string> {
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+  const flags = [
+    tab?.frozen ? '凍結' : '',
+    tab?.discarded ? '破棄' : '',
+    tab?.status !== 'complete' ? `読み込み中(${tab?.status})` : '',
+    tab?.active ? '表示中' : '裏',
+  ].filter(Boolean).join('・');
+  try {
+    const [injection] = await withTimeout(
+      chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: (path: string, sinceMs: number) => {
+          // 頼んだ時刻より後に、その通信が返ってきた記録があるか
+          const origin = performance.timeOrigin;
+          const done = performance
+            .getEntriesByType('resource')
+            .filter((e) => e.name.includes(path) && origin + e.startTime >= sinceMs - 1000)
+            .map((e) => Math.round((e as PerformanceResourceTiming).duration));
+          return { done, visible: document.visibilityState };
+        },
+        args: [req.path, since],
+      }),
+      3_000,
+    );
+    const r = injection?.result as { done: number[]; visible: string } | undefined;
+    const net = r?.done.length ? `通信は返っている(${r.done.join(',')}ms)` : '通信は返っていない';
+    return `タブは応答する・${net}・${r?.visible ?? '?'}・${flags}`;
+  } catch {
+    return `タブも応答しない・${flags}`;
+  }
+}
+
+/**
+ * タブの中でAPIを1回呼ぶ。途中でタブが凍結されたら、すぐ読み込み直してやり直す。
+ * 凍結以外の理由で返事がないときは、様子を記録して1回だけ読み込み直す。
  */
 async function execute(tabId: number, req: BridgeRequest): Promise<BridgeResult> {
   const once = async () => {
-    const [injection] = await withTimeout(
-      chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: linkexBridgeCall, args: [req] }),
-      CALL_TIMEOUT_MS,
-    );
-    return (injection?.result as BridgeResult | undefined) ?? { ok: false as const, error: 'no_result' };
-  };
-  try {
-    return await once();
-  } catch (e) {
-    if (!(e instanceof TabTimeoutError)) throw e;
-    void logEvent('warn', 'Linkexのタブが応答しないため、読み込み直します（スリープ中のタブの可能性）');
-    await reloadAndWait(tabId);
+    const frozen = watchFrozen(tabId);
     try {
-      return await once();
-    } catch (e2) {
-      if (e2 instanceof TabTimeoutError) {
-        throw new Error('Linkexのタブが応答しません。Linkexのタブを一度開いてから、もう一度「開始」を押してください');
+      const [injection] = await Promise.race([
+        withTimeout(
+          chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: linkexBridgeCall, args: [req] }),
+          CALL_TIMEOUT_MS,
+        ),
+        frozen.promise,
+      ]);
+      return (injection?.result as BridgeResult | undefined) ?? { ok: false as const, error: 'no_result' };
+    } finally {
+      frozen.stop();
+    }
+  };
+  let timeouts = 0;
+  for (let attempt = 1; ; attempt++) {
+    const since = Date.now();
+    const epoch = reloadEpoch;
+    try {
+      const result = await once();
+      // 途中でほかの件がタブを読み込み直すと、空の返事になることがある。読み込みを待ってやり直す
+      if (!result.ok && result.error === 'no_result' && reloadEpoch !== epoch && attempt < MAX_FROZEN_RELOADS) {
+        await reloading.get(tabId)?.catch(() => undefined);
+        continue;
       }
-      throw e2;
+      return result;
+    } catch (e) {
+      if (!(e instanceof TabTimeoutError) && !(e instanceof TabFrozenError)) {
+        // 同時に動いているほかの件がタブを読み込み直すと、こちらの命令は途中で失敗する。読み込みを待ってやり直す
+        if (reloadEpoch === epoch || attempt >= MAX_FROZEN_RELOADS) throw e;
+        await reloading.get(tabId)?.catch(() => undefined);
+        continue;
+      }
+      if (e instanceof TabTimeoutError) {
+        // 凍結とは別の理由で返事がない。様子を記録してから読み込み直す（これは1回まで）
+        if (++timeouts > 1) {
+          throw new Error('Linkexのタブが応答しません。Linkexのタブを一度開いてから、もう一度「開始」を押してください');
+        }
+        const why = await diagnoseStall(tabId, req, since);
+        void logEvent('warn', `Linkexのタブが応答しないため、読み込み直します: ${req.path}（${why}）`);
+      }
+      // Edgeは裏のタブを数秒で凍結することがあり、よく起きるので1回ずつは書かず、回数だけ数える
+      if (e instanceof TabFrozenError && !reloading.has(tabId)) frozenReloads++;
+      if (attempt >= MAX_FROZEN_RELOADS) {
+        throw new Error('Linkexのタブがすぐに凍結されてしまいます。Linkexのタブを一度表示してから、もう一度「開始」を押してください');
+      }
+      await reloadAndWait(tabId);
     }
   }
+}
+
+let frozenReloads = 0;
+/** 凍結されたタブを読み込み直した回数を返し、数え直す */
+export function takeFrozenReloads(): number {
+  const n = frozenReloads;
+  frozenReloads = 0;
+  return n;
+}
+
+/** 1回の呼び出しの中で、凍結されたタブを読み込み直す回数の上限 */
+const MAX_FROZEN_RELOADS = 4;
+/** 凍結されていないかを見る間隔 */
+const FROZEN_POLL_MS = 250;
+
+/** Edgeに凍結・破棄されたタブには、命令しても返事が来ない */
+class TabFrozenError extends Error {}
+
+/**
+ * 呼び出しの最中にタブが凍結・破棄されたら、すぐ失敗にする。
+ * これがないと、返事の待ちの上限（20秒）まで待ってしまう
+ */
+function watchFrozen(tabId: number): { promise: Promise<never>; stop: () => void } {
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const promise = new Promise<never>((_, reject) => {
+    timer = setInterval(async () => {
+      const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+      if (tab?.frozen || tab?.discarded) reject(new TabFrozenError('frozen'));
+    }, FROZEN_POLL_MS);
+  });
+  promise.catch(() => undefined); // 止めた後に失敗しても、未処理のエラーにしない
+  return { promise, stop: () => clearInterval(timer) };
 }

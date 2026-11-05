@@ -1,4 +1,4 @@
-import { sanitizeName, withNumber } from '../shared/files';
+import { relDirFor, sanitizeName, singleTopFolder, withNumber } from '../shared/files';
 import type { QueueItem } from '../shared/queue';
 import { parseShareTokens } from '../shared/share-url';
 import type { WalkedFile } from './linkex-bridge';
@@ -19,6 +19,8 @@ export interface WalkedShare {
   token: string;
   shareName: string;
   files: WalkedFile[];
+  /** 共有全体が1つのフォルダの下にあるなら true。共有名の段を飛ばし、そのフォルダから保存する */
+  collapseRoot?: boolean;
 }
 
 /** 同時に読む共有リンクの数 */
@@ -39,7 +41,7 @@ export async function enqueueShares(text: string, pageTabId?: number): Promise<E
       const token = tokens[index];
       const res = await walkShareInTab(token, { pageTabId }).catch((e) => ({ ok: false as const, error: String(e?.message ?? e) }));
       if (res.ok) {
-        walked[index] = { token, shareName: res.shareName, files: res.files };
+        walked[index] = { token, shareName: res.shareName, files: res.files, collapseRoot: singleTopFolder(res.files) !== null };
       } else {
         result.failed.push({ token, error: res.error });
       }
@@ -66,7 +68,7 @@ export async function addWalkedToQueue(shares: WalkedShare[]): Promise<{ added: 
           counts.alreadyQueued++;
           continue;
         }
-        const relDir = [sanitizeName(share.shareName, share.token), ...f.folders.map((d) => sanitizeName(d))].join('\\');
+        const relDir = relDirFor(share.shareName, share.token, f.folders, Boolean(share.collapseRoot));
         const base = sanitizeName(f.name);
         let outName = base;
         for (let n = 2; items.some((i) => i.relDir === relDir && i.outName === outName); n++) {

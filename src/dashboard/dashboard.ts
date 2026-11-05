@@ -4,6 +4,7 @@ import type { Settings } from '../shared/settings';
 import { parseShareToken } from '../shared/share-url';
 import { setupQueueView } from './queue-view';
 import { secondPress } from '../ui/confirm';
+import { HASHES_KEY } from '../shared/queue';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -143,6 +144,7 @@ async function loadSettingsIntoForm() {
   (form.elements.namedItem('downloadDir') as HTMLInputElement).value = s.downloadDir;
   (form.elements.namedItem('apiIntervalMs') as HTMLInputElement).value = String(s.apiIntervalMs);
   (form.elements.namedItem('maxDownloads') as HTMLInputElement).value = String(s.maxDownloads);
+  (form.elements.namedItem('parallelItems') as HTMLInputElement).value = String(s.parallelItems);
   (form.elements.namedItem('pauseOnTrafficLimit') as HTMLInputElement).checked = s.pauseOnTrafficLimit;
   (form.elements.namedItem('notifications') as HTMLInputElement).checked = s.notifications;
   (form.elements.namedItem('autoStartOnAdd') as HTMLInputElement).checked = s.autoStartOnAdd;
@@ -156,6 +158,7 @@ form.addEventListener('submit', async (ev) => {
     downloadDir: v('downloadDir').value.trim(),
     apiIntervalMs: Math.max(0, Number(v('apiIntervalMs').value) || 0),
     maxDownloads: Math.min(16, Math.max(1, Number(v('maxDownloads').value) || 1)),
+    parallelItems: Math.min(6, Math.max(1, Number(v('parallelItems').value) || 1)),
     pauseOnTrafficLimit: v('pauseOnTrafficLimit').checked,
     notifications: v('notifications').checked,
     autoStartOnAdd: v('autoStartOnAdd').checked,
@@ -326,3 +329,26 @@ void refreshQuietly();
 setInterval(() => {
   if (document.visibilityState === 'visible') void refreshQuietly();
 }, 60_000);
+
+// ---------- ダウンロード済みの記録 ----------
+const showHashCount = (hashes: Record<string, unknown> | undefined) => {
+  $('hashes-count').textContent = `${Object.keys(hashes ?? {}).length.toLocaleString()}件`;
+};
+void chrome.storage.local.get(HASHES_KEY).then((v) => showHashCount(v[HASHES_KEY] as Record<string, unknown> | undefined));
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[HASHES_KEY]) showHashCount(changes[HASHES_KEY].newValue as Record<string, unknown> | undefined);
+});
+$('hashes-clear').addEventListener('click', async (ev) => {
+  const button = ev.currentTarget as HTMLButtonElement;
+  if (!secondPress(button, 'もう一度押すと記録を消します')) return;
+  button.disabled = true;
+  try {
+    const res = await send({ type: 'hashes.clear' });
+    if (!res.ok) throw new Error(res.error);
+    log('ダウンロード済みの記録を消しました');
+  } catch (e) {
+    log(`エラー: ${(e as Error).message}`);
+  } finally {
+    button.disabled = false;
+  }
+});

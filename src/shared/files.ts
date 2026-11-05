@@ -46,3 +46,22 @@ export function withNumber(name: string, n: number): string {
   if (dot <= 0) return `${name} (${n})`;
   return `${name.slice(0, dot)} (${n})${name.slice(dot)}`;
 }
+
+/**
+ * 共有の中身が全部1つのフォルダの下にあれば、そのフォルダ名を返す（なければ null）。
+ * 「選んで追加」で一部だけ追加しても保存先がそろうよう、共有全体のファイルで判定する
+ */
+export function singleTopFolder(files: { folders: string[] }[]): string | null {
+  const top = files[0]?.folders[0];
+  if (top === undefined) return null;
+  return files.every((f) => f.folders.length > 0 && f.folders[0] === top) ? top : null;
+}
+
+/**
+ * 基準フォルダからの保存先（共有名\共有内のフォルダ）。
+ * collapse なら共有名の段を飛ばし、共有の中の1つのフォルダから始める（フォルダを二重に開かずに済むように）
+ */
+export function relDirFor(shareName: string, token: string, folders: string[], collapse: boolean): string {
+  const parts = collapse && folders.length > 0 ? folders : [shareName || token, ...folders];
+  return parts.map((d, i) => sanitizeName(d, i === 0 ? token : '_')).join('\\');
+}

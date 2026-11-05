@@ -16,9 +16,12 @@ export type Request =
       token: string;
       shareName: string;
       files: { id: string; name: string; size: number | null; hash: string | null; folders: string[] }[];
+      /** 共有全体が1つのフォルダの下にあるなら true（共有名の段を飛ばして保存する） */
+      collapseRoot?: boolean;
     }
   | { type: 'dashboard.open'; tab?: string }
   | { type: 'events.clear' }
+  | { type: 'hashes.clear' }
   | { type: 'queue.start' }
   | { type: 'queue.pause' }
   | { type: 'queue.retry'; id: string }

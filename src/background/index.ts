@@ -5,7 +5,7 @@ import { kick, pause, refreshDownloads, start } from './engine';
 import { addWalkedToQueue, enqueueShares } from './enqueue';
 import { callLinkex, ensureLinkexTab, walkShareInTab } from './linkex-tab';
 import { addDownload, getGlobalStat, getVersion, tellActive, tellStatus } from './motrix';
-import { clearEvents, mutateQueue, readEngine } from './store';
+import { clearEvents, clearHashes, mutateQueue, readEngine } from './store';
 import { watchBadge } from './badge';
 import { createMenus, setupMenuClicks } from './menus';
 import { setupNotificationClick } from './notify';
@@ -108,7 +108,7 @@ async function handle(req: Request, pageTabId?: number): Promise<unknown> {
       return { shareName: res.shareName, files: res.files };
     }
     case 'queue.addFiles':
-      return addWalkedToQueue([{ token: req.token, shareName: req.shareName, files: req.files }]);
+      return addWalkedToQueue([{ token: req.token, shareName: req.shareName, files: req.files, collapseRoot: req.collapseRoot }]);
     case 'dashboard.open':
       return openDashboard(req.tab);
     case 'queue.start':
@@ -140,6 +140,8 @@ async function handle(req: Request, pageTabId?: number): Promise<unknown> {
 
     case 'events.clear':
       return clearEvents();
+    case 'hashes.clear':
+      return clearHashes();
     case 'settings.get':
       return loadSettings();
     case 'settings.set':

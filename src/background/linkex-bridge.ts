@@ -17,7 +17,7 @@ export interface BridgeRequest {
 
 export type BridgeResult =
   | { ok: true; data: unknown }
-  | { ok: false; error: string; detail?: unknown; status?: number | null; loggedIn?: boolean | null };
+  | { ok: false; error: string; detail?: unknown; status?: number | null; authEntries?: [string, string][] };
 
 export interface WalkedFile {
   id: string;
@@ -214,7 +214,13 @@ export async function linkexBridgeCall(req: BridgeRequest): Promise<BridgeResult
   };
 
   try {
-    const w = window as unknown as { __linkexMotrixClient?: any };
+    const w = window as unknown as { __linkexMotrixClient?: any; __linkexMotrixKeepAlive?: boolean };
+    // Edge（Chromium）は裏に回ったタブを凍結するが、Web Lock を持っているページは凍結しない。
+    // 鍵を取ったまま返さないことで、処理用のタブが凍結されないようにする（読み込み直すと外れるので、そのたびに取り直す）
+    if (!w.__linkexMotrixKeepAlive && navigator.locks) {
+      w.__linkexMotrixKeepAlive = true;
+      void navigator.locks.request('linkex-motrix-keep-alive', () => new Promise<void>(() => undefined));
+    }
     if (!w.__linkexMotrixClient) {
       const pattern = /\/drive\/assets\/js\/index-[^/]+\.js(\?.*)?$/;
       const fromScripts = Array.from(document.querySelectorAll<HTMLScriptElement>('script[type="module"][src]'))
@@ -236,6 +242,8 @@ export async function linkexBridgeCall(req: BridgeRequest): Promise<BridgeResult
       );
       if (!client) return { ok: false, error: 'client_not_found' };
       w.__linkexMotrixClient = client;
+      // 応答がないときに「通信が返ってきたか」を調べられるよう、通信の記録を多めに残す（初期値は250件）
+      performance.setResourceTimingBufferSize(5000);
     }
 
     const client = w.__linkexMotrixClient;
@@ -246,19 +254,25 @@ export async function linkexBridgeCall(req: BridgeRequest): Promise<BridgeResult
       : await client.post(req.path, req.data, config);
     return { ok: true, data: toPlain(res) };
   } catch (e: any) {
-    let loggedIn: boolean | null = null;
+    // 失敗の理由がログイン切れかを見分けるため、ログイン情報の入れ物を拾う（判定は Service Worker 側）。
+    // トークンの中身は外に出さないよう、空でなければ "x" に伏せる
+    const authEntries: [string, string][] = [];
     try {
-      // Web版はログイン情報をここに置いている。失敗の理由がログイン切れかを見分けるために使う
-      loggedIn = Boolean(localStorage.getItem('linkex_credentials'));
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) ?? '';
+        if (!/credential|user_cache/i.test(key)) continue;
+        const value = (localStorage.getItem(key) ?? '').replace(/("[A-Za-z]*[Tt]oken"\s*:\s*")[^"]+"/g, '$1x"');
+        authEntries.push([key, value]);
+      }
     } catch {
-      loggedIn = null;
+      // 読めなければ「分からない」扱いになる
     }
     return {
       ok: false,
       error: String(e?.message ?? e),
       detail: toPlain(e?.data ?? e?.response?.data ?? null),
       status: Number(e?.response?.status ?? e?.status) || null,
-      loggedIn,
+      authEntries,
     };
   }
 }

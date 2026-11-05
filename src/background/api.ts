@@ -1,3 +1,4 @@
+import { judgeLogin } from '../shared/auth';
 import { callLinkex, LinkexLoginError } from './linkex-tab';
 
 /** 容量不足のエラーコード（Web版のコードより） */
@@ -17,7 +18,10 @@ async function call<T>(method: 'get' | 'post', path: string, payload?: unknown):
   });
   if (!res.ok) {
     // 401、またはログイン情報が消えている状態での失敗は、ログイン切れとして全体を止める
-    if (res.status === 401 || res.loggedIn === false) throw new LinkexLoginError();
+    // （ログイン情報が読めない形のときは決めつけず、件ごとの失敗として扱う）
+    if (res.status === 401 || judgeLogin(res.authEntries ?? []) === false) {
+      throw new LinkexLoginError(`${path}: ${res.error}`);
+    }
     const detail = res.detail as any;
     const code = Number(detail?.code ?? NaN);
     throw new LinkexError(`${path}: ${res.error}`, Number.isFinite(code) ? code : null, detail);
